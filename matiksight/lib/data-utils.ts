@@ -14,6 +14,7 @@ export type Dataset = {
   size: number;
   type: "Excel" | "CSV" | "Foto Tabel";
   rows: number;
+  data?: SalesRow[];
   uploadedAt: string;
   createdAt?: string;
   status: "Belum diproses" | "Selesai" | "Diproses" | "Gagal";

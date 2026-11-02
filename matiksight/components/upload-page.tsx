@@ -6,6 +6,7 @@ import { ArrowRight, Check, FileImage, FileSpreadsheet, FileText, Info, UploadCl
 import { useApp } from "@/components/app-provider";
 import { PageHeader, Panel } from "@/components/ui";
 import { Dataset } from "@/lib/data-utils";
+import { parseSpreadsheet } from "@/lib/spreadsheet-utils";
 
 type UploadKind = Dataset["type"];
 type SelectedFile = { file: File; kind: UploadKind };
@@ -33,6 +34,11 @@ export function UploadPage() {
       setError(`${invalid.name} tidak didukung. Pilih file Excel, CSV, PNG, atau JPG.`);
       return;
     }
+    const oversized = list.find((file) => file.size > 20 * 1024 * 1024);
+    if (oversized) {
+      setError(`${oversized.name} melebihi batas ukuran 20 MB.`);
+      return;
+    }
     const newFiles = list.map((file) => {
       const extension = file.name.split(".").pop()?.toLowerCase();
       const fileKind: UploadKind = extension === "csv" ? "CSV" : ["png", "jpg", "jpeg"].includes(extension ?? "") ? "Foto Tabel" : "Excel";
@@ -42,12 +48,26 @@ export function UploadPage() {
   };
   const onChange = (event: ChangeEvent<HTMLInputElement>) => { if (event.target.files) accept(event.target.files); event.target.value = ""; };
   const onDrop = (event: DragEvent<HTMLDivElement>) => { event.preventDefault(); if (event.dataTransfer.files) accept(event.dataTransfer.files); };
-  const addSelectedFile = () => {
+  const addSelectedFile = async () => {
     if (!selected.length) return;
-    const first = selected[0];
-    addDataset(first.file.name, first.file.size, first.kind);
-    notify("Informasi file dicatat. Pembacaan isi file belum tersedia.");
-    router.push("/preview");
+    setError("");
+    let added = 0;
+    const failures: string[] = [];
+    for (const entry of selected) {
+      try {
+        const rows = entry.kind === "Foto Tabel" ? [] : await parseSpreadsheet(entry.file);
+        addDataset(entry.file.name, entry.file.size, entry.kind, rows);
+        added += 1;
+      } catch (reason) {
+        const detail = reason instanceof Error ? reason.message : "Format file tidak dapat dibaca.";
+        failures.push(`${entry.file.name}: ${detail}`);
+      }
+    }
+    if (added) {
+      notify(`${added} file ditambahkan${selected.some(({ kind: fileKind }) => fileKind === "Foto Tabel") ? ". Foto tabel belum mendukung OCR." : " dan datanya siap divisualisasikan."}`);
+      router.push("/preview");
+    }
+    if (failures.length) setError(failures.join(" "));
   };
 
   return <div className="page-content">
@@ -63,9 +83,9 @@ export function UploadPage() {
         </div>
         {error && <p className="form-error" role="alert">{error}</p>}
         {selected.length > 0 && <div className="selected-files">{selected.map(({ file }) => <div className="selected-file" key={`${file.name}-${file.size}`}><span className="file-icon"><FileSpreadsheet size={16} /></span><div><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} KB · Belum diproses</small></div><button aria-label={`Hapus ${file.name}`} onClick={() => setSelected((previous) => previous.filter((entry) => entry.file !== file))}><X size={16} /></button></div>)}</div>}
-        <div className="upload-actions"><button className="button button-quiet" onClick={() => { setSelected([]); setError(""); }}>Reset</button><button className="button button-primary" disabled={!selected.length} onClick={addSelectedFile}>Catat File <ArrowRight size={16} /></button></div>
+        <div className="upload-actions"><button className="button button-quiet" onClick={() => { setSelected([]); setError(""); }}>Reset</button><button className="button button-primary" disabled={!selected.length} onClick={addSelectedFile}>Proses File <ArrowRight size={16} /></button></div>
       </Panel>
-      <aside className="upload-aside"><Panel className="upload-info"><span className="info-icon"><Info size={19} /></span><h3>Pemrosesan file belum tersedia</h3><p>Saat ini workspace hanya mencatat nama dan ukuran file. Isi file belum dibaca atau disimpan.</p><div className="info-divider" /><div className="info-point"><span><Check size={13} /></span>Tidak ada data contoh yang ditampilkan</div></Panel><Panel className="upload-tip"><span className="tip-label">TIPS</span><h3>Data yang rapi, insight yang jelas.</h3><p>Pastikan tabel memiliki baris header dan tidak ada kolom kosong agar hasil visualisasi lebih mudah dibaca.</p></Panel></aside>
+      <aside className="upload-aside"><Panel className="upload-info"><span className="info-icon"><Info size={19} /></span><h3>File spreadsheet diproses di browser</h3><p>Isi file CSV dan Excel dibaca langsung untuk membuat preview dan grafik. Foto tabel belum mendukung OCR.</p><div className="info-divider" /><div className="info-point"><span><Check size={13} /></span>File tidak dikirim ke server</div></Panel><Panel className="upload-tip"><span className="tip-label">TIPS</span><h3>Data yang rapi, insight yang jelas.</h3><p>Pastikan tabel memiliki baris header dan tidak ada kolom kosong agar hasil visualisasi lebih mudah dibaca.</p></Panel></aside>
     </div>
   </div>;
 }

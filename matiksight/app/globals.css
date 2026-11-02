@@ -313,13 +313,15 @@ tbody tr:hover { background: #fbfdff; }
 .chart-panel, .raw-data-panel, .config-panel, .insight-panel, .category-panel { padding: 16px; }
 .chart-title-input { width: min(270px,44vw); padding: 0; border: 0; outline: 0; color: #1d2b41; background: transparent; font-size: 13px; font-weight: 650; }
 .chart-title-input:focus { box-shadow: 0 1px #159edb; }
+.visual-heading { display: inline-flex; align-items: center; gap: 8px; color: #23334b; font-size: 15px; font-weight: 650; }
+.visual-heading > svg { color: #2787df; }
 .chart-type-row { display: flex; gap: 5px; margin: 15px 0 5px; padding-bottom: 8px; overflow-x: auto; border-bottom: 1px solid #edf1f5; }
 .chart-type-button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border: 0; border-radius: 6px; color: #7c899a; background: transparent; font-size: 9px; white-space: nowrap; }
 .chart-type-button:hover { color: #2386c0; background: #f5faff; }
 .chart-type-button.active { color: #147db9; background: #eaf6fd; font-weight: 650; }
 .chart-type-button > span { display: grid; place-items: center; }
-.visual-chart { width: 100%; height: 325px; padding: 8px 0 0; }
-.visual-chart.pie-visual-chart { height: 325px; }
+.visual-chart { width: 100%; height: 250px; padding: 8px 0 0; }
+.visual-chart.pie-visual-chart { height: 250px; }
 .chart-footnote { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 9px; border-top: 1px solid #edf1f5; color: #8e9aaa; font-size: 9px; }
 .chart-footnote > span { display: flex; align-items: center; gap: 6px; }
 .chart-footnote > span i { width: 6px; height: 6px; border-radius: 50%; background: #159edb; }
@@ -342,7 +344,18 @@ tbody tr:hover { background: #fbfdff; }
 .insight-item > div { min-width: 0; padding-top: 1px; }
 .insight-item strong { color: #35465c; font-size: 10px; font-weight: 600; }
 .insight-item p { margin: 4px 0 0; color: #8996a5; font-size: 9px; line-height: 1.45; }
-.category-panel .panel-heading { margin-bottom: 15px; }
+.category-panel .panel-heading { margin-bottom: 16px; }
+.category-visual { display: grid; grid-template-columns: minmax(110px, .95fr) minmax(112px, 1fr); align-items: center; gap: 16px; min-height: 190px; }
+.category-donut { width: min(100%, 168px); aspect-ratio: 1; display: grid; place-items: center; border: 1px solid #edf2f8; border-radius: 50%; box-shadow: 0 5px 16px #18385d0a; }
+.category-donut > span { width: 61%; height: 61%; display: grid; align-content: center; justify-items: center; gap: 3px; border-radius: 50%; color: #1d2b41; background: white; }
+.category-donut strong { font-size: 22px; font-weight: 700; letter-spacing: -.03em; }
+.category-donut small { color: #8290a3; font-size: 11px; }
+.category-legend { min-width: 0; display: grid; gap: 14px; }
+.category-legend > div { min-width: 0; display: grid; grid-template-columns: 9px minmax(0,1fr) auto; align-items: center; gap: 8px; color: #53647b; font-size: 11px; line-height: 1.35; }
+.category-legend i { width: 9px; height: 9px; border-radius: 50%; }
+.category-legend span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.category-legend strong { color: #34445a; font-size: 11px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.insight-total { color: #24334b !important; font-size: 14px !important; font-weight: 700; }
 .category-progress { margin: 12px 0; }
 .category-progress > div:first-child { display: flex; justify-content: space-between; margin-bottom: 6px; color: #6d7c90; font-size: 9px; }
 .category-progress > div:first-child span { display: inline-flex; align-items: center; gap: 6px; }
@@ -489,7 +502,8 @@ tbody tr:hover { background: #fbfdff; }
   .visual-toolbar { align-items: flex-start; flex-direction: column; }
   .visual-actions { width: 100%; }
   .visual-actions .button { flex: 1; }
-  .visual-chart, .visual-chart.pie-visual-chart { height: 280px; }
+  .visual-chart, .visual-chart.pie-visual-chart { height: 260px; }
+  .category-visual { grid-template-columns: minmax(110px, .8fr) minmax(130px, 1fr); gap: 18px; }
   .visual-aside { grid-template-columns: minmax(0,1fr); }
   .category-panel { grid-column: auto; }
   .report-row { flex-wrap: wrap; gap: 8px; padding: 11px 0; }

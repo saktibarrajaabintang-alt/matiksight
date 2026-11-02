@@ -9,7 +9,7 @@ type AppContextValue = {
   visualizations: Visualization[];
   settings: Settings;
   toast: string;
-  addDataset: (fileName: string, fileSize: number, type: Dataset["type"]) => string;
+  addDataset: (fileName: string, fileSize: number, type: Dataset["type"], rows: SalesRow[]) => string;
   removeDataset: (id: string) => void;
   saveVisualization: (visualization: Omit<Visualization, "id" | "createdAt">) => void;
   updateVisualization: (id: string, updates: Partial<Visualization>) => void;
@@ -78,7 +78,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready) return;
-    localStorage.setItem(storageKey, JSON.stringify({ datasets, visualizations, settings, currentDatasetId }));
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ datasets, visualizations, settings, currentDatasetId }));
+    } catch (error) {
+      console.error("Could not save the MatikSight workspace to local storage.", error);
+    }
   }, [datasets, visualizations, settings, currentDatasetId, ready]);
 
   const notify = useCallback((message: string) => {
@@ -86,9 +90,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     window.setTimeout(() => setToast(""), 3200);
   }, []);
 
-  const addDataset = useCallback((fileName: string, fileSize: number, type: Dataset["type"]) => {
-    const id = `dataset-${Date.now()}`;
-    setDatasets((previous) => [{ id, name: fileName, size: Math.round(fileSize / 1024), type, rows: 0, uploadedAt: "Baru saja", createdAt: new Date().toISOString(), status: "Belum diproses" }, ...previous]);
+  const addDataset = useCallback((fileName: string, fileSize: number, type: Dataset["type"], rows: SalesRow[]) => {
+    const id = `dataset-${crypto.randomUUID()}`;
+    setDatasets((previous) => [{
+      id, name: fileName, size: Math.round(fileSize / 1024), type, rows: rows.length, data: rows,
+      uploadedAt: "Baru saja", createdAt: new Date().toISOString(), status: rows.length ? "Selesai" : "Belum diproses",
+    }, ...previous]);
     setCurrentDatasetId(id);
     return id;
   }, []);
@@ -117,7 +124,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => ({
     datasets, visualizations, settings, toast, addDataset, removeDataset, saveVisualization,
     updateVisualization, removeVisualization, updateSettings, notify, currentDataset,
-    setCurrentDatasetId, rows: [],
+    setCurrentDatasetId, rows: currentDataset?.data ?? [],
   }), [datasets, visualizations, settings, toast, addDataset, removeDataset, saveVisualization, updateVisualization, removeVisualization, updateSettings, notify, currentDataset]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
