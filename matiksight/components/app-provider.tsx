@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Dataset, SalesRow, Visualization } from "@/lib/data-utils";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Dataset, DatasetRecord, ParsedDataset, Visualization } from "@/lib/data-utils";
+import { buildDatasetProfile } from "@/lib/dataset-service";
 
 export type Settings = { name: string; email: string; theme: "Terang" | "Gelap" | "Sistem"; defaultChart: string; pageSize: number };
 type AppContextValue = {
@@ -9,7 +10,7 @@ type AppContextValue = {
   visualizations: Visualization[];
   settings: Settings;
   toast: string;
-  addDataset: (fileName: string, fileSize: number, type: Dataset["type"], rows: SalesRow[]) => string;
+  addDataset: (fileName: string, fileSize: number, type: Dataset["type"], parsed: ParsedDataset) => { id: string; duplicate: boolean };
   removeDataset: (id: string) => void;
   saveVisualization: (visualization: Omit<Visualization, "id" | "createdAt">) => void;
   updateVisualization: (id: string, updates: Partial<Visualization>) => void;
@@ -18,7 +19,7 @@ type AppContextValue = {
   notify: (message: string) => void;
   currentDataset: Dataset | null;
   setCurrentDatasetId: (id: string) => void;
-  rows: SalesRow[];
+  rows: DatasetRecord[];
 };
 
 const storageKey = "matiksight-workspace-v2";
@@ -26,8 +27,16 @@ const legacyStorageKey = "matiksight-workspace-v1";
 const defaultSettings: Settings = { name: "", email: "", theme: "Terang", defaultChart: "Bar", pageSize: 10 };
 const AppContext = createContext<AppContextValue | null>(null);
 
+function applyTheme(theme: Settings["theme"]) {
+  const dark = theme === "Gelap" || (
+    theme === "Sistem" && window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const datasetsRef = useRef<Dataset[]>([]);
   const [visualizations, setVisualizations] = useState<Visualization[]>([]);
   const [settings, setSettings] = useState(defaultSettings);
   const [currentDatasetId, setCurrentDatasetId] = useState("");
@@ -45,15 +54,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const restoredDatasets = Array.isArray(parsed.datasets)
           ? parsed.datasets
             .filter((dataset) => !["dataset-sales", "dataset-students", "dataset-school"].includes(dataset.id))
-            .map((dataset) => migratingLegacy ? { ...dataset, rows: 0, status: "Belum diproses" as const } : dataset)
+            .map((dataset) => {
+              const hasDynamicData = Array.isArray(dataset.columns)
+                && Array.isArray(dataset.data)
+                && dataset.data.every(Array.isArray);
+              if (hasDynamicData && !migratingLegacy) return dataset;
+              return {
+                ...dataset,
+                rows: 0,
+                data: [],
+                columns: [],
+                profile: buildDatasetProfile([], []),
+                status: "Belum diproses" as const,
+              };
+            })
           : [];
+        const datasetIds = new Set(restoredDatasets.map((dataset) => dataset.id));
         const restoredVisualizations = Array.isArray(parsed.visualizations)
-          ? migratingLegacy ? [] : parsed.visualizations.filter((visualization) => !["visual-1", "visual-2"].includes(visualization.id))
+          ? migratingLegacy ? [] : parsed.visualizations.filter((visualization) =>
+            datasetIds.has(visualization.datasetId)
+            && typeof visualization.xKey === "string"
+            && typeof visualization.yKey === "string"
+            && typeof visualization.aggregation === "string",
+          )
           : [];
+        datasetsRef.current = restoredDatasets;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore persisted workspace after mount without changing server-rendered defaults.
         setDatasets(restoredDatasets);
         setVisualizations(restoredVisualizations);
         if (parsed.settings && typeof parsed.settings === "object") {
           const restoredSettings = { ...defaultSettings, ...parsed.settings };
+          if (!["Terang", "Gelap", "Sistem"].includes(restoredSettings.theme)) {
+            restoredSettings.theme = defaultSettings.theme;
+          }
           if (restoredSettings.name === "Bintang" && restoredSettings.email === "bintang@matikcreative.id") {
             restoredSettings.name = "";
             restoredSettings.email = "";
@@ -85,27 +118,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [datasets, visualizations, settings, currentDatasetId, ready]);
 
+  useEffect(() => {
+    if (!ready) return;
+    applyTheme(settings.theme);
+    if (settings.theme !== "Sistem") return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => applyTheme("Sistem");
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [settings.theme, ready]);
+
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3200);
   }, []);
 
-  const addDataset = useCallback((fileName: string, fileSize: number, type: Dataset["type"], rows: SalesRow[]) => {
+  const addDataset = useCallback((fileName: string, fileSize: number, type: Dataset["type"], parsed: ParsedDataset) => {
+    const size = Math.ceil(fileSize / 1024);
+    const content = JSON.stringify({ columns: parsed.columns, rows: parsed.rows });
+    const duplicate = datasetsRef.current.find((dataset) =>
+      dataset.name === fileName
+      && dataset.type === type
+      && JSON.stringify({ columns: dataset.columns ?? [], rows: dataset.data ?? [] }) === content,
+    );
+    if (duplicate) {
+      setCurrentDatasetId(duplicate.id);
+      return { id: duplicate.id, duplicate: true };
+    }
+
     const id = `dataset-${crypto.randomUUID()}`;
-    setDatasets((previous) => [{
-      id, name: fileName, size: Math.round(fileSize / 1024), type, rows: rows.length, data: rows,
-      uploadedAt: "Baru saja", createdAt: new Date().toISOString(), status: rows.length ? "Selesai" : "Belum diproses",
-    }, ...previous]);
+    const uploaded = new Date();
+    const dataset: Dataset = {
+      id,
+      name: fileName,
+      size,
+      type,
+      rows: parsed.rows.length,
+      data: parsed.rows,
+      columns: parsed.columns,
+      profile: parsed.profile,
+      sheetName: parsed.sheetName,
+      uploadedAt: uploaded.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }),
+      createdAt: uploaded.toISOString(),
+      status: parsed.rows.length && parsed.columns.length ? "Selesai" : "Belum diproses",
+    };
+    datasetsRef.current = [dataset, ...datasetsRef.current];
+    setDatasets(datasetsRef.current);
     setCurrentDatasetId(id);
-    return id;
+    return { id, duplicate: false };
   }, []);
 
   const removeDataset = useCallback((id: string) => {
-    setDatasets((previous) => previous.filter((dataset) => dataset.id !== id));
+    datasetsRef.current = datasetsRef.current.filter((dataset) => dataset.id !== id);
+    setDatasets(datasetsRef.current);
   }, []);
 
   const saveVisualization = useCallback((visualization: Omit<Visualization, "id" | "createdAt">) => {
-    setVisualizations((previous) => [{ ...visualization, id: `visual-${Date.now()}`, createdAt: "Baru saja" }, ...previous]);
+    setVisualizations((previous) => [{ ...visualization, id: `visual-${crypto.randomUUID()}`, createdAt: "Baru saja" }, ...previous]);
   }, []);
 
   const updateVisualization = useCallback((id: string, updates: Partial<Visualization>) => {
@@ -117,6 +187,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateSettings = useCallback((updates: Partial<Settings>) => {
+    if (updates.theme) applyTheme(updates.theme);
     setSettings((previous) => ({ ...previous, ...updates }));
   }, []);
 

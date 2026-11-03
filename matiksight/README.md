@@ -18,6 +18,16 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Dataset processing
+
+CSV, XLS, and XLSX files are parsed in the browser by `lib/spreadsheet-utils.ts`. Workbook uploads expose their available sheets, and the selected sheet's original headers and values drive the preview, profile, and visualizations. Parsed datasets are kept in the local workspace store so they remain available while navigating the application.
+
+There are no dataset API routes in this project. Uploads are not sent to a server; connect a typed service to the actual backend contract when one is available rather than treating local data as a server response.
+
+Successfully parsed spreadsheet datasets also create dynamic entries under Google Ads. Labels come from each filename, and distinct datasets with the same label receive separate numbered entries. Re-uploading the same file and parsed content reuses the existing workspace dataset; deleting a dataset removes its navigation entry. Each entry opens the shared visualization experience scoped to that dataset, including its dynamic profile summaries, chart recommendations, and data preview.
+
+The current frontend has no AI insight endpoint, so these dataset pages show existing locally computed statistical insights rather than backend-generated AI content.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

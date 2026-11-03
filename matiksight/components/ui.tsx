@@ -17,8 +17,14 @@ export function StatusBadge({ children }: { children: string }) {
   return <span className={`status-badge ${className}`}><i />{children}</span>;
 }
 
-export function SelectField({ value, options, onChange, label }: { value: string; options: string[]; onChange: (value: string) => void; label?: string }) {
-  return <label className="select-wrap">{label && <span className="sr-only">{label}</span>}<select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select><ChevronDown size={14} /></label>;
+export type SelectOption = string | { value: string; label: string };
+
+export function SelectField({ value, options, onChange, label }: { value: string; options: SelectOption[]; onChange: (value: string) => void; label?: string }) {
+  return <label className="select-wrap">{label && <span className="sr-only">{label}</span>}<select value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => {
+    const optionValue = typeof option === "string" ? option : option.value;
+    const optionLabel = typeof option === "string" ? option : option.label;
+    return <option key={optionValue} value={optionValue}>{optionLabel}</option>;
+  })}</select><ChevronDown size={14} /></label>;
 }
 
 export function Trend({ value, positive = true }: { value: string; positive?: boolean }) {
