@@ -14,19 +14,45 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001) with your browser to see the result. Port `3000` is reserved for the backend API.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-## Dataset processing
+## Backend integration
 
-CSV, XLS, and XLSX files are parsed in the browser by `lib/spreadsheet-utils.ts`. Workbook uploads expose their available sheets, and the selected sheet's original headers and values drive the preview, profile, and visualizations. Parsed datasets are kept in the local workspace store so they remain available while navigating the application.
+The frontend uses the NestJS API from the `backend` branch. Set `NEXT_PUBLIC_API_BASE_URL` to the backend origin (default `http://localhost:3000`) in `matiksight/.env.local`; do not put credentials in this public variable. The backend must allow the frontend origin in `CORS_ORIGINS`. The frontend development server runs on port `3001` to match the backend branch's example CORS origin.
 
-There are no dataset API routes in this project. Uploads are not sent to a server; connect a typed service to the actual backend contract when one is available rather than treating local data as a server response.
+Authentication uses the backend's one-hour bearer JWT. The access token is kept in session storage unless “Ingat saya” is selected, in which case it is kept in local storage. Dataset records, previews, profile data, visualizations, and deletions are fetched from the API; only UI preferences and the selected dataset ID are stored locally. Existing workspace data in older local-storage keys is left untouched and is not treated as server data.
 
-Successfully parsed spreadsheet datasets also create dynamic entries under Google Ads. Labels come from each filename, and distinct datasets with the same label receive separate numbered entries. Re-uploading the same file and parsed content reuses the existing workspace dataset; deleting a dataset removes its navigation entry. Each entry opens the shared visualization experience scoped to that dataset, including its dynamic profile summaries, chart recommendations, and data preview.
+CSV, XLSX, and XLS uploads are sent to `POST /datasets` and processed by the backend. Excel files use the first worksheet. The image option remains visible, but photo-to-dataset upload is unavailable because the dataset endpoint accepts only CSV/XLSX/XLS and OCR is not implemented. Dataset lists, paginated previews, deletions, chart data, aggregation, and saved visualizations use their corresponding backend endpoints. The reports screen lists saved visualizations; the separate saved-report API does not currently have a matching create/edit workflow in this UI.
 
-The current frontend has no AI insight endpoint, so these dataset pages show existing locally computed statistical insights rather than backend-generated AI content.
+### Run the backend and frontend
+
+The backend implementation is on a separate branch. Keep it in a second worktree so the frontend branch can remain checked out:
+
+```bash
+git worktree add ../matiksight-backend backend
+cd ../matiksight-backend/backend
+npm install
+npm run prisma:generate
+# Configure backend/.env with the PostgreSQL URL and a private JWT_SECRET first.
+npm run prisma:deploy
+npm run start:dev
+```
+
+`prisma:deploy` applies the committed migrations and does not reset the database. It is still pending until explicitly run against a configured PostgreSQL database.
+
+In another terminal, from the frontend worktree:
+
+```bash
+cd matiksight
+cp api.env.example .env.local
+# Set NEXT_PUBLIC_API_BASE_URL=http://localhost:3000 in .env.local if the API uses another origin.
+npm install
+npm run dev
+```
+
+The frontend can also be started without `.env.local` when the backend is at `http://localhost:3000`.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

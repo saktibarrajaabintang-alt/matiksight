@@ -82,6 +82,7 @@ export type Visualization = ChartConfiguration & {
   id: string;
   datasetName: string;
   createdAt: string;
+  filters?: { column: string; operator: string; value?: unknown }[];
 };
 
 export type ChartRecommendation = ChartConfiguration & {

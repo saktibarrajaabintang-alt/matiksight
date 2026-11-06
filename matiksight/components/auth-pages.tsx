@@ -1,15 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 import {
   ArrowRight, BarChart3, Eye, EyeOff, LockKeyhole, Mail, Moon, ShieldCheck,
   Sun, UserRound, Zap,
 } from "lucide-react";
 import { useApp } from "@/components/app-provider";
-import {
-  AuthenticationUnavailableError, registerAccount, signIn, signInWithGoogle,
-} from "@/lib/auth-service";
+import { ApiError } from "@/lib/api-client";
+import { AuthenticationUnavailableError, signInWithGoogle } from "@/lib/auth-service";
 
 type AuthMode = "login" | "register";
 type FieldErrors = Record<string, string>;
@@ -157,10 +157,17 @@ function AuthShell({ children }: { children: ReactNode }) {
 function getServiceError(error: unknown) {
   if (error instanceof AuthenticationUnavailableError) return error.message;
   console.error("MatikSight authentication request failed.", error);
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message === "Failed to fetch") {
+    return "Tidak dapat menghubungi server MatikSight. Periksa koneksi dan alamat API.";
+  }
+  if (error instanceof Error) return error.message;
   return "Terjadi kesalahan saat menghubungi layanan autentikasi. Silakan coba lagi.";
 }
 
 export function LoginPage() {
+  const router = useRouter();
+  const { login } = useApp();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -181,7 +188,8 @@ export function LoginPage() {
 
     setLoading(true);
     try {
-      await signIn({ identifier, password, remember });
+      await login({ identifier, password, remember });
+      router.replace("/dashboard");
     } catch (error) {
       setMessage(getServiceError(error));
     } finally {
@@ -218,6 +226,8 @@ export function LoginPage() {
 }
 
 export function RegisterPage() {
+  const router = useRouter();
+  const { register } = useApp();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -232,10 +242,10 @@ export function RegisterPage() {
     const password = String(formData.get("password") ?? "");
     const confirmation = String(formData.get("confirmation") ?? "");
     const nextErrors: FieldErrors = {};
-    if (name.length < 2) nextErrors.name = "Nama lengkap minimal 2 karakter.";
+    if (name.length < 2 || name.length > 120) nextErrors.name = "Nama lengkap harus memiliki 2–120 karakter.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) nextErrors.email = "Masukkan alamat email yang valid.";
-    if (!/^[a-zA-Z0-9._-]{3,24}$/.test(username)) nextErrors.username = "Username 3–24 karakter, gunakan huruf, angka, titik, garis bawah, atau tanda hubung.";
-    if (password.length < 8) nextErrors.password = "Password harus memiliki minimal 8 karakter.";
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) nextErrors.username = "Username 3–30 karakter, gunakan huruf, angka, atau garis bawah.";
+    if (password.length < 8 || new TextEncoder().encode(password).length > 72) nextErrors.password = "Password harus memiliki minimal 8 karakter dan maksimal 72 byte UTF-8.";
     if (confirmation !== password) nextErrors.confirmation = "Konfirmasi password tidak cocok.";
     if (!acceptedTerms) nextErrors.terms = "Setujui syarat dan ketentuan untuk melanjutkan.";
     setErrors(nextErrors);
@@ -244,7 +254,8 @@ export function RegisterPage() {
 
     setLoading(true);
     try {
-      await registerAccount({ name, email, username, password });
+      await register({ name, email, username, password });
+      router.replace("/dashboard");
     } catch (error) {
       setMessage(getServiceError(error));
     } finally {
