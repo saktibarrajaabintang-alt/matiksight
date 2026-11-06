@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import { AppModule } from './../src/app.module';
 import { DatasetProcessingService } from '../src/datasets/dataset-processing.service';
 import { DatasetsService } from '../src/datasets/datasets.service';
+import { UploadService } from '../src/upload/upload.service';
 import { JwtService } from '@nestjs/jwt';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { SafeExceptionFilter } from '../src/security/safe-exception.filter';
@@ -20,6 +21,16 @@ describe('AppController (e2e)', () => {
     })
       .overrideProvider(DatasetsService)
       .useFactory({ factory: (processing: DatasetProcessingService) => ({ create: (_userId: string, file?: any) => processing.process(file) }), inject: [DatasetProcessingService] })
+      .overrideProvider(UploadService)
+      .useValue({
+        upload: (_userId: string, file?: any) => ({
+          success: true,
+          message: 'File berhasil diterima.',
+          originalName: file.originalname,
+          size: file.size,
+          mimeType: file.mimetype,
+        }),
+      })
       .compile();
 
     app = moduleFixture.createNestApplication();

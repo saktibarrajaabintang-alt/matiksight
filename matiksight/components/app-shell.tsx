@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Bell, ChevronDown, CircleHelp, Clock3, Command, FileBarChart2,
-  FileSpreadsheet, LayoutDashboard, Menu, Search, Settings, UserRound, X,
+  FileSpreadsheet, LayoutDashboard, LogOut, Menu, Search, Settings, UserRound, X,
 } from "lucide-react";
 import { useApp } from "@/components/app-provider";
 
@@ -21,11 +21,16 @@ const navigation = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { datasets, visualizations, settings, notify, toast } = useApp();
+  const { datasets, visualizations, settings, notify, toast, token, authReady, logout } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menu, setMenu] = useState<"search" | "notifications" | "user" | null>(null);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
+  const isAuthPage = pathname === "/login" || pathname === "/register";
+
+  useEffect(() => {
+    if (authReady && !token && !isAuthPage) router.replace("/login");
+  }, [authReady, isAuthPage, router, token]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -48,6 +53,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ...visualizations.filter((item) => item.title.toLowerCase().includes(term)).map((item) => ({ title: item.title, href: "/reports", detail: "Visualisasi" })),
     ].slice(0, 5);
   }, [datasets, visualizations, query]);
+
+  if (isAuthPage) return <>{children}</>;
+  if (!authReady || !token) return <div className="auth-loading" role="status">Memeriksa sesi...</div>;
 
   const closeMenus = () => setMenu(null);
   const navContent = (
@@ -103,7 +111,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
             <div className="menu-anchor">
               <button className="profile-button" onClick={() => setMenu(menu === "user" ? null : "user")} aria-expanded={menu === "user"}><span className="avatar">{settings.name.charAt(0).toUpperCase() || "U"}</span><span className="profile-name">{settings.name || "Pengguna"}</span><ChevronDown size={15} /></button>
-              {menu === "user" && <div className="floating-menu user-menu"><button onClick={() => { router.push("/settings"); closeMenus(); }}><UserRound size={16} /> Profil</button><button onClick={() => { router.push("/settings"); closeMenus(); }}><Settings size={16} /> Preferensi</button><button onClick={() => { notify("Pusat bantuan akan segera tersedia."); closeMenus(); }}><CircleHelp size={16} /> Bantuan</button></div>}
+              {menu === "user" && <div className="floating-menu user-menu"><button onClick={() => { router.push("/settings"); closeMenus(); }}><UserRound size={16} /> Profil</button><button onClick={() => { router.push("/settings"); closeMenus(); }}><Settings size={16} /> Preferensi</button><button onClick={() => { notify("Pusat bantuan akan segera tersedia."); closeMenus(); }}><CircleHelp size={16} /> Bantuan</button><button onClick={() => { void logout().then(() => router.replace("/login")).catch((error: unknown) => notify(error instanceof Error ? error.message : "Logout gagal.")); closeMenus(); }}><LogOut size={16} /> Keluar</button></div>}
             </div>
           </div>
         </header>

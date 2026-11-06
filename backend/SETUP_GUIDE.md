@@ -64,9 +64,11 @@ filesystem paths must not be exposed to clients.
    origins in `CORS_ORIGINS`.
 5. Start with `npm run start:prod`.
 
-This code change has not applied migrations to a database. Existing datasets
-created before file storage have no source file to restore; their metadata and
-parsed rows remain intact.
+The development database configured for this workspace is `matiksight_dev` on
+the local PostgreSQL server; its migrations have been applied. Production
+databases must be backed up and migrated separately. Existing datasets created
+before file storage have no source file to restore; their metadata and parsed
+rows remain intact.
 
 ## Verification commands
 
@@ -83,8 +85,14 @@ database as the test target.
 
 ## Frontend connection
 
-Set the frontend API origin to the backend host, send bearer tokens in
-`Authorization`, and use the multipart field name `file` for uploads. Current
-frontend pages still keep their workspace in `localStorage`; connecting them
-to the persistent API is a separate integration task. Do not rely on local
-browser state as a substitute for backend persistence.
+The Next.js frontend is configured to run at `http://localhost:3001` and call
+the backend at `http://localhost:3000` by default. Copy the frontend
+`.env.example` to `.env.local` if the backend runs at a different origin, and
+set `NEXT_PUBLIC_API_URL`. The backend `.env` must allow the exact frontend
+origin in `CORS_ORIGINS`, for example `http://localhost:3001`.
+
+The frontend authenticates with bearer tokens, uploads CSV/XLS/XLSX files using
+the multipart field `file`, and loads datasets, previews, visualizations, and
+reports through the authenticated API. Theme and table preferences remain
+local to the browser. Do not use the development database or local storage as a
+production persistence strategy.
