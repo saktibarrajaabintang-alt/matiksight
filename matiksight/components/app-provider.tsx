@@ -2,7 +2,10 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/api";
-import { ColumnMetadata, DataRow, Dataset, SavedReport, Visualization, ChartType } from "@/lib/data-utils";
+import {
+  ColumnMetadata, DataRow, Dataset, DatasetColumn, DatasetColumnType,
+  DatasetProfile, SavedReport, Visualization, ChartType,
+} from "@/lib/data-utils";
 
 export type Settings = { name: string; email: string; theme: "Terang" | "Gelap" | "Sistem"; defaultChart: string; pageSize: number };
 type UserProfile = { id: string; fullName: string | null; username: string; email: string };
@@ -12,7 +15,7 @@ type DatasetRecord = {
 };
 type VisualizationRecord = {
   id: string; datasetId: string; name: string; chartType: string;
-  configuration: { chartType: string; xAxis: string; yAxis: string };
+  configuration: { chartType: string; xAxis: string; yAxis: string; aggregation?: string; period?: string };
   createdAt: string;
 };
 type ApiList<T> = { success: boolean; data: T[] };
@@ -31,7 +34,7 @@ type AppContextValue = {
   columnMetadata: ColumnMetadata[];
   addDataset: (file: File) => Promise<void>;
   removeDataset: (id: string) => Promise<void>;
-  saveVisualization: (visualization: { title: string; datasetId: string; chartType: ChartType; xKey: string; yKey: string; aggregation: string }) => Promise<void>;
+  saveVisualization: (visualization: Omit<Visualization, "id" | "createdAt">) => Promise<void>;
   renameDataset: (id: string, name: string) => Promise<void>;
   updateVisualization: (id: string, updates: Partial<Visualization>) => Promise<void>;
   removeVisualization: (id: string) => Promise<void>;
@@ -39,7 +42,7 @@ type AppContextValue = {
   removeReport: (id: string) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  login: (identifier: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string, remember?: boolean) => Promise<void>;
   register: (input: { fullName: string; username: string; email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   notify: (message: string) => void;
@@ -53,7 +56,64 @@ const settingsStorageKey = "matiksight-preferences";
 const defaultSettings: Settings = { name: "", email: "", theme: "Terang", defaultChart: "Bar", pageSize: 10 };
 const AppContext = createContext<AppContextValue | null>(null);
 
+function mapColumnType(type: string | undefined): DatasetColumnType {
+  switch (type?.toLowerCase()) {
+    case "number": return "decimal";
+    case "date": return "date";
+    case "datetime": return "datetime";
+    case "time": return "time";
+    case "boolean": return "boolean";
+    case "currency": return "currency";
+    case "percentage": return "percentage";
+    default: return "string";
+  }
+}
+
+function mapColumns(names: string[] = [], metadata: ColumnMetadata[] = []): DatasetColumn[] {
+  return names.map((name, index) => {
+    const column = metadata.find((item) => item.name === name);
+    return {
+      key: String(index),
+      name,
+      type: mapColumnType(column?.type),
+      missingValues: column?.nullCount ?? 0,
+    };
+  });
+}
+
+function mapProfile(columns: DatasetColumn[], metadata: ColumnMetadata[], rowCount: number): DatasetProfile {
+  const numericColumns = columns.flatMap((column) => {
+    const source = metadata.find((item) => item.name === column.name);
+    if (column.type !== "integer" && column.type !== "decimal" && column.type !== "currency" && column.type !== "percentage") return [];
+    const minimum = Number(source?.min);
+    const maximum = Number(source?.max);
+    const average = Number(source?.mean);
+    if (![minimum, maximum, average].every(Number.isFinite)) return [];
+    return [{ columnKey: column.key, minimum, maximum, average, sum: average * rowCount }];
+  });
+  const categoricalColumns = columns.flatMap((column) => {
+    const source = metadata.find((item) => item.name === column.name);
+    if (!source || !["category", "text", "string"].includes(source.type.toLowerCase())) return [];
+    return [{ columnKey: column.key, distinctValues: source.uniqueCount, topValues: [] }];
+  });
+  const dateRanges = columns.flatMap((column) => {
+    const source = metadata.find((item) => item.name === column.name);
+    if (!source || !["date", "datetime"].includes(source.type.toLowerCase()) || source.min === undefined || source.max === undefined) return [];
+    return [{ columnKey: column.key, start: String(source.min), end: String(source.max) }];
+  });
+  return {
+    rowCount,
+    columnCount: columns.length,
+    missingValues: columns.reduce((total, column) => total + column.missingValues, 0),
+    numericColumns,
+    categoricalColumns,
+    dateRanges,
+  };
+}
+
 function mapDataset(record: DatasetRecord): Dataset {
+  const metadata = record.columnMetadata ?? [];
+  const columns = mapColumns(record.columns, metadata);
   return {
     id: record.id,
     name: record.name,
@@ -63,21 +123,25 @@ function mapDataset(record: DatasetRecord): Dataset {
     uploadedAt: new Date(record.createdAt).toLocaleString("id-ID"),
     createdAt: record.createdAt,
     status: "Selesai",
-    columns: record.columns,
-    columnMetadata: record.columnMetadata,
+    columns,
+    columnMetadata: metadata,
+    profile: mapProfile(columns, metadata, record.rowCount),
   };
 }
 
 function mapVisualization(record: VisualizationRecord, datasets: Dataset[]): Visualization {
   const config = record.configuration;
+  const dataset = datasets.find((item) => item.id === record.datasetId);
   return {
     id: record.id,
     datasetId: record.datasetId,
     title: record.name,
     datasetName: datasets.find((dataset) => dataset.id === record.datasetId)?.name ?? "Dataset",
     chartType: (record.chartType.charAt(0).toUpperCase() + record.chartType.slice(1)) as ChartType,
-    xKey: config.xAxis,
-    yKey: config.yAxis,
+    xKey: dataset?.columns?.find((column) => column.name === config.xAxis)?.key ?? config.xAxis,
+    yKey: dataset?.columns?.find((column) => column.name === config.yAxis)?.key ?? config.yAxis,
+    aggregation: (config.aggregation ?? "sum") as Visualization["aggregation"],
+    period: (config.period ?? "Semua Data") as Visualization["period"],
     createdAt: new Date(record.createdAt).toLocaleString("id-ID"),
   };
 }
@@ -99,7 +163,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initialize = () => {
       try {
-        setToken(localStorage.getItem(tokenStorageKey));
+        setToken(localStorage.getItem(tokenStorageKey) ?? sessionStorage.getItem(tokenStorageKey));
         const storedSettings = localStorage.getItem(settingsStorageKey);
         if (storedSettings) setSettings({ ...defaultSettings, ...JSON.parse(storedSettings) as Partial<Settings> });
       } catch (error) {
@@ -119,6 +183,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const clearSession = useCallback(() => {
     localStorage.removeItem(tokenStorageKey);
+    sessionStorage.removeItem(tokenStorageKey);
     setToken(null);
     setDatasets([]);
     setVisualizations([]);
@@ -174,12 +239,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setPreviewDatasetId("");
       return;
     }
-    const result = await apiRequest<{ data: DataRow[]; dataset: { columnMetadata?: ColumnMetadata[] } }>(
+    const result = await apiRequest<{ data: DataRow[]; dataset: { columns?: string[]; columnMetadata?: ColumnMetadata[] } }>(
       `/datasets/${encodeURIComponent(id)}/preview?limit=100`,
       { token },
     );
+    const names = result.dataset.columns ?? [];
+    const metadata = result.dataset.columnMetadata ?? [];
+    const columns = mapColumns(names, metadata);
+    const previewRows = result.data.map((row) => columns.map((column) => row[column.name]));
     setRows(result.data);
-    setColumnMetadata(result.dataset.columnMetadata ?? []);
+    setColumnMetadata(metadata);
+    setDatasets((previous) => previous.map((item) => item.id === id ? {
+      ...item,
+      columns: columns.length ? columns : item.columns,
+      columnMetadata: metadata,
+      data: previewRows,
+      profile: item.profile ?? mapProfile(columns, metadata, item.rows),
+    } : item));
     setPreviewDatasetId(id);
   }, [token]);
 
@@ -193,9 +269,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [token, currentDatasetId, refreshDatasetPreview, notify]);
 
-  const login = useCallback(async (identifier: string, password: string) => {
+  const login = useCallback(async (identifier: string, password: string, remember = true) => {
     const result = await apiRequest<AuthResponse>("/auth/login", { body: { identifier, password } });
-    localStorage.setItem(tokenStorageKey, result.data.accessToken);
+    const storage = remember ? localStorage : sessionStorage;
+    const otherStorage = remember ? sessionStorage : localStorage;
+    storage.setItem(tokenStorageKey, result.data.accessToken);
+    otherStorage.removeItem(tokenStorageKey);
     setSettings((current) => ({ ...current, name: result.data.user.fullName ?? "", email: result.data.user.email }));
     setToken(result.data.accessToken);
   }, []);
@@ -242,7 +321,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setDatasets((previous) => previous.map((item) => item.id === id ? { ...item, name: result.data.name } : item));
   }, [token]);
 
-  const saveVisualization = useCallback(async (visualization: { title: string; datasetId: string; chartType: ChartType; xKey: string; yKey: string; aggregation: string }) => {
+  const saveVisualization = useCallback(async (visualization: Omit<Visualization, "id" | "createdAt">) => {
     if (!token) throw new Error("Silakan masuk kembali.");
     const result = await apiRequest<{ data: VisualizationRecord }>("/visualizations", {
       token,
@@ -251,9 +330,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         name: visualization.title,
         configuration: {
           chartType: visualization.chartType.toLowerCase(),
-          xAxis: visualization.xKey,
-          yAxis: visualization.yKey,
-          groupBy: visualization.chartType === "Scatter" ? [] : [visualization.xKey],
+          xAxis: datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.xKey)?.name ?? visualization.xKey,
+          yAxis: datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.yKey)?.name ?? visualization.yKey,
+          groupBy: visualization.chartType === "Scatter" ? [] : [
+            datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.xKey)?.name ?? visualization.xKey,
+          ],
           aggregation: visualization.aggregation,
           limit: 100,
         },

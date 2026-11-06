@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import { AppProvider } from "@/components/app-provider";
 import { AppShell } from "@/components/app-shell";
 import "./globals.css";
+import "../components/auth-pages.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -21,9 +24,21 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="min-h-full">
-        <AppProvider><AppShell>{children}</AppShell></AppProvider>
+        <Script id="theme-bootstrap" strategy="beforeInteractive">{`
+          (function () {
+            try {
+              var saved = localStorage.getItem("matiksight-preferences");
+              var theme = saved ? JSON.parse(saved).theme : "Terang";
+              var dark = theme === "Gelap" || (theme === "Sistem" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+              document.documentElement.dataset.theme = dark ? "dark" : "light";
+            } catch (error) {
+              console.error("Could not initialize MatikSight theme from local storage.", error);
+            }
+          })();
+        `}</Script>
+        <AppProvider><Suspense fallback={<main className="app-shell-loading" aria-busy="true">Memuat MatikSight…</main>}><AppShell>{children}</AppShell></Suspense></AppProvider>
       </body>
     </html>
   );
