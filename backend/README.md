@@ -25,6 +25,12 @@
 
 [Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
 
+For the implemented system overview, routes, schema, and deployment guidance,
+see [BACKEND_ARCHITECTURE.md](./BACKEND_ARCHITECTURE.md),
+[API_DOCUMENTATION.md](./API_DOCUMENTATION.md),
+[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md), and
+[SETUP_GUIDE.md](./SETUP_GUIDE.md).
+
 ## Setup database dan environment
 
 Backend menggunakan PostgreSQL dengan Prisma ORM. Schema metadata dataset
@@ -43,6 +49,9 @@ melalui foreign key cascade.
 
 Untuk deployment gunakan `npm run prisma:deploy`. Perubahan schema dibuat lewat
 Prisma migration. File `.env.example` hanya memiliki nilai contoh.
+Atur `DATA_STORAGE_DIR` ke volume privat yang persisten agar file asli dapat
+bertahan setelah restart; jangan letakkan direktori tersebut di bawah folder
+publik/static.
 
 ## Authentication API
 
@@ -96,10 +105,13 @@ bagian dari upload response.
 | Method | Endpoint | Deskripsi |
 | --- | --- | --- |
 | POST | `/datasets` | Upload dan simpan dataset dan profil |
-| GET | `/datasets?page=1&limit=20&search=...` | Daftar milik pengguna dengan pencarian nama/file |
+| POST | `/datasets/upload` | Alias upload dengan response yang sama |
+| GET | `/datasets?page=1&limit=20&search=...` | Daftar milik pengguna, pencarian, filter tipe, dan sort |
 | GET | `/datasets/:id` | Metadata, schema, dan profil |
 | GET | `/datasets/:id/preview?page=1&limit=20` | Baris data dengan pagination |
-| DELETE | `/datasets/:id` | Hapus dataset dan baris terkait |
+| GET | `/datasets/:id/download` | Unduh file asli jika tersedia |
+| PATCH | `/datasets/:id` | Ubah nama tampilan dataset |
+| DELETE | `/datasets/:id` | Hapus dataset, baris, artefak terkait, dan file asli |
 
 `limit` maksimal 100; preview default 20 baris. ID harus berupa UUID. Dataset
 milik pengguna lain dan ID yang tidak ditemukan sama-sama menghasilkan 404.

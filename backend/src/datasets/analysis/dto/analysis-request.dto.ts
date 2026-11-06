@@ -100,6 +100,7 @@ export enum ChartType {
   Bar = 'bar',
   Line = 'line',
   Pie = 'pie',
+  Donut = 'donut',
   Area = 'area',
   Scatter = 'scatter',
 }

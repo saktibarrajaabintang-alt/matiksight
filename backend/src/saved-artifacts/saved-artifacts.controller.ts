@@ -76,7 +76,7 @@ export class SavedVisualizationsController {
       configuration: {
         type: 'object', required: ['chartType', 'xAxis', 'yAxis'],
         properties: {
-          chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'area', 'scatter'] }, xAxis: { type: 'string', maxLength: 255 }, yAxis: { type: 'string', maxLength: 255 },
+          chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'donut', 'area', 'scatter'] }, xAxis: { type: 'string', maxLength: 255 }, yAxis: { type: 'string', maxLength: 255 },
           groupBy: { type: 'array', maxItems: 3, items: { type: 'string' } }, aggregation: { type: 'string', enum: ['count', 'sum', 'average', 'minimum', 'maximum', 'distinct_count'] },
           filters: { type: 'array', maxItems: 20, items: { type: 'object', required: ['column', 'operator'], properties: { column: { type: 'string' }, operator: { type: 'string', enum: ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'contains', 'in', 'isNull'] }, value: {} } } },
           sort: { type: 'object', properties: { column: { type: 'string' }, direction: { type: 'string', enum: ['asc', 'desc'] } } }, limit: { type: 'integer', minimum: 1, maximum: 1000 },
@@ -130,7 +130,7 @@ export class SavedVisualizationsController {
     type: 'object', minProperties: 1,
     properties: {
       datasetId: { type: 'string', format: 'uuid' }, name: { type: 'string', maxLength: 160 }, description: { type: 'string', nullable: true, maxLength: 2000 },
-      configuration: { type: 'object', required: ['chartType', 'xAxis', 'yAxis'], properties: { chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'area', 'scatter'] }, xAxis: { type: 'string' }, yAxis: { type: 'string' }, groupBy: { type: 'array', maxItems: 3, items: { type: 'string' } }, aggregation: { type: 'string', enum: ['count', 'sum', 'average', 'minimum', 'maximum', 'distinct_count'] }, filters: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: true } }, sort: { type: 'object', additionalProperties: true }, limit: { type: 'integer', minimum: 1, maximum: 1000 } } },
+      configuration: { type: 'object', required: ['chartType', 'xAxis', 'yAxis'], properties: { chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'donut', 'area', 'scatter'] }, xAxis: { type: 'string' }, yAxis: { type: 'string' }, groupBy: { type: 'array', maxItems: 3, items: { type: 'string' } }, aggregation: { type: 'string', enum: ['count', 'sum', 'average', 'minimum', 'maximum', 'distinct_count'] }, filters: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: true } }, sort: { type: 'object', additionalProperties: true }, limit: { type: 'integer', minimum: 1, maximum: 1000 } } },
     },
   }, { name: 'Updated chart' })
   patch(

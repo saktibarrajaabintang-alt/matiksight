@@ -122,11 +122,13 @@ export function ApiJsonRequest(schema: OpenApiSchema, example: unknown, descript
   });
 }
 
-export function ApiMultipartFileRequest() {
+export function ApiMultipartFileRequest(
+  description = 'One CSV, XLSX, or XLS file, maximum 20 MiB. The multipart field name is `file`.',
+) {
   return applyDecorators(
     ApiBody({
       required: true,
-      description: 'One CSV, XLSX, or XLS file, maximum 20 MiB. The multipart field name is `file`.',
+      description,
       schema: {
         type: 'object',
         required: ['file'],

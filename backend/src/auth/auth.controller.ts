@@ -70,4 +70,19 @@ export class AuthController {
   me(@Req() request: AuthenticatedRequest) {
     return this.auth.me(request.user.id);
   }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiEndpointDocs({
+    summary: 'Log out the current session',
+    description: 'Bearer tokens are stateless; the client must discard its token. Existing tokens expire after one hour.',
+    successStatus: 201,
+    successDescription: 'Logout acknowledged.',
+    successExample: { success: true, message: 'Logout berhasil. Hapus token akses dari client.' },
+    errors: [401],
+  })
+  logout() {
+    return { success: true, message: 'Logout berhasil. Hapus token akses dari client.' };
+  }
 }

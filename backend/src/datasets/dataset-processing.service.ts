@@ -61,8 +61,14 @@ export class DatasetProcessingService {
     if (!file) {
       throw new BadRequestException('File wajib diunggah dengan key "file".');
     }
+    if (!Number.isInteger(file.size) || file.size < 0) {
+      throw new BadRequestException('Ukuran file tidak valid.');
+    }
     if (file.size > MAX_FILE_SIZE) {
       throw new PayloadTooLargeException('Ukuran file maksimal 20 MB.');
+    }
+    if (typeof file.originalname !== 'string' || file.originalname.trim().length === 0) {
+      throw new BadRequestException('Nama file tidak valid.');
     }
     const extension = this.extensionOf(file.originalname);
     if (!SUPPORTED_EXTENSIONS.has(extension)) {
@@ -75,6 +81,9 @@ export class DatasetProcessingService {
     }
     if (!file.buffer?.length) {
       throw new BadRequestException('File kosong atau tidak memiliki isi.');
+    }
+    if (!Buffer.isBuffer(file.buffer) || file.size !== file.buffer.length) {
+      throw new BadRequestException('Ukuran file tidak sesuai dengan isinya.');
     }
     this.validateContent(extension, file.buffer);
 

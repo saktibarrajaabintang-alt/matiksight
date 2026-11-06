@@ -1,10 +1,16 @@
 import {
   BadRequestException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
   PayloadTooLargeException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { UploadFile } from './upload-file.interface';
+import { basename } from 'node:path';
+import { PrismaService } from '../prisma/prisma.service';
+import { FileStorageService } from '../storage/file-storage.service';
+import type { UploadFile } from './upload-file.interface';
 import * as XLSX from 'xlsx';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -21,7 +27,89 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 
 @Injectable()
 export class UploadService {
-  upload(file?: UploadFile) {
+  private readonly logger = new Logger(UploadService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: FileStorageService,
+  ) {}
+
+  async upload(userId: string, file?: UploadFile) {
+    const metadata = this.validate(file);
+    const originalFilename = Array.from(basename(file!.originalname.replace(/\\/g, '/')))
+      .filter((character) => character.charCodeAt(0) >= 32)
+      .join('').slice(0, 255) || 'upload';
+    const extension = originalFilename.slice(originalFilename.lastIndexOf('.')).toLowerCase();
+    const storageKey = await this.storage.store(file!.buffer, extension);
+    let uploadedFile;
+    try {
+      uploadedFile = await this.prisma.uploadedFile.create({
+        data: {
+          userId,
+          originalFilename,
+          storageKey,
+          fileType: extension.slice(1),
+          mimeType: file!.mimetype,
+          fileSize: file!.size,
+        },
+        select: { id: true, createdAt: true },
+      });
+    } catch (error) {
+      try {
+        await this.storage.remove(storageKey);
+      } catch {
+        this.logger.error('Failed to clean up a stored file after upload metadata creation failed.');
+      }
+      throw error;
+    }
+
+    return {
+      success: true,
+      message: 'File berhasil diterima.',
+      ...metadata,
+      id: uploadedFile.id,
+      createdAt: uploadedFile.createdAt,
+    };
+  }
+
+  async download(userId: string, id: string) {
+    const uploadedFile = await this.prisma.uploadedFile.findFirst({
+      where: { id, userId },
+      select: { originalFilename: true, storageKey: true, mimeType: true },
+    });
+    if (!uploadedFile) throw new NotFoundException('File tidak ditemukan.');
+    try {
+      return {
+        buffer: await this.storage.read(uploadedFile.storageKey),
+        filename: uploadedFile.originalFilename,
+        mimeType: uploadedFile.mimeType,
+      };
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+        throw new NotFoundException('File tidak ditemukan.');
+      }
+      throw error;
+    }
+  }
+
+  async remove(userId: string, id: string) {
+    const uploadedFile = await this.prisma.uploadedFile.findFirst({
+      where: { id, userId },
+      select: { id: true, storageKey: true },
+    });
+    if (!uploadedFile) throw new NotFoundException('File tidak ditemukan.');
+    const result = await this.prisma.uploadedFile.deleteMany({ where: { id, userId } });
+    if (result.count === 0) throw new NotFoundException('File tidak ditemukan.');
+    try {
+      await this.storage.remove(uploadedFile.storageKey);
+    } catch {
+      this.logger.error('Failed to remove a stored file after its database record was deleted.');
+      throw new InternalServerErrorException('Metadata dihapus, tetapi file penyimpanan gagal dibersihkan.');
+    }
+    return { success: true, message: 'File berhasil dihapus.' };
+  }
+
+  private validate(file?: UploadFile) {
     if (!file) {
       throw new BadRequestException('File wajib diunggah dengan key "file".');
     }
@@ -60,8 +148,6 @@ export class UploadService {
     this.validateFileContent(extension, file.buffer);
 
     return {
-      success: true,
-      message: 'File berhasil diterima.',
       originalName: file.originalname,
       size: file.size,
       mimeType: file.mimetype,

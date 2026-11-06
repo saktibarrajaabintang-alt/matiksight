@@ -139,8 +139,8 @@ export class DatasetAnalysisService {
       return this.scatterData(userId, dataset, request, columns);
     }
     const groupBy = [...new Set([request.xAxis, ...(request.groupBy ?? [])])];
-    if (request.chartType === ChartType.Pie && groupBy.length > 1) {
-      throw new BadRequestException('Pie chart hanya mendukung xAxis sebagai groupBy.');
+    if ((request.chartType === ChartType.Pie || request.chartType === ChartType.Donut) && groupBy.length > 1) {
+      throw new BadRequestException('Pie dan donut chart hanya mendukung xAxis sebagai groupBy.');
     }
     if (groupBy.includes(request.yAxis)) throw new BadRequestException('yAxis tidak boleh menjadi groupBy.');
     const aggregateRequest: AggregateRequestDto = {
@@ -189,8 +189,8 @@ export class DatasetAnalysisService {
     if (request.chartType === ChartType.Scatter && (groupBy.length > 1 || (request.metrics?.length ?? 0) > 0)) {
       throw new BadRequestException('Konfigurasi scatter tidak menerima groupBy tambahan atau metrics.');
     }
-    if (request.chartType === ChartType.Pie && groupBy.length > 1) {
-      throw new BadRequestException('Pie chart hanya mendukung xAxis sebagai groupBy.');
+    if ((request.chartType === ChartType.Pie || request.chartType === ChartType.Donut) && groupBy.length > 1) {
+      throw new BadRequestException('Pie dan donut chart hanya mendukung xAxis sebagai groupBy.');
     }
     if (groupBy.includes(request.yAxis)) throw new BadRequestException('yAxis tidak boleh menjadi groupBy.');
     this.validateGroupBy(groupBy, byName);
@@ -247,8 +247,8 @@ export class DatasetAnalysisService {
     if (aggregation !== AggregationOperation.Count && y.type !== 'number') {
       throw new BadRequestException('yAxis harus berupa kolom numerik untuk agregasi ini.');
     }
-    if (chartType === ChartType.Pie) {
-      if (x.type !== 'category' && x.type !== 'boolean') throw new BadRequestException('Pie chart memerlukan kolom kategorikal.');
+    if (chartType === ChartType.Pie || chartType === ChartType.Donut) {
+      if (x.type !== 'category' && x.type !== 'boolean') throw new BadRequestException('Pie dan donut chart memerlukan kolom kategorikal.');
       if (x.uniqueCount > MAX_CATEGORY_PIE_SLICES) throw new BadRequestException(`Pie chart dibatasi hingga ${MAX_CATEGORY_PIE_SLICES} kategori.`);
       return;
     }

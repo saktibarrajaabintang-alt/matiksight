@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FileStorageService } from '../src/storage/file-storage.service';
 import { ValidationPipe } from '@nestjs/common';
 import { SafeExceptionFilter } from '../src/security/safe-exception.filter';
 
@@ -14,12 +15,13 @@ function memoryDatabase() {
   const rows: Array<Record<string, any>> = [];
   const visualizations: Array<Record<string, any>> = [];
   const reports: Array<Record<string, any>> = [];
+  const uploadedFiles: Array<Record<string, any>> = [];
   const user = {
     create: jest.fn(async ({ data, select }: any) => {
       if (users.some((u) => u.username === data.username || u.email === data.email)) {
         throw { code: 'P2002' };
       }
-      const created = { id: `00000000-0000-4000-8000-${String(users.length + 1).padStart(12, '0')}`, ...data, createdAt: new Date(), updatedAt: new Date() };
+      const created = { id: `00000000-0000-4000-8000-${String(users.length + 1).padStart(12, '0')}`, profilePhotoUrl: null, accountStatus: 'active', ...data, createdAt: new Date(), updatedAt: new Date() };
       users.push(created);
       return select ? Object.fromEntries(Object.keys(select).map((key) => [key, created[key]])) : created;
     }),
@@ -28,6 +30,12 @@ function memoryDatabase() {
     findUnique: jest.fn(async ({ where, select }: any) => {
       const found = users.find((item) => item.id === where.id);
       return found && select ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : found ?? null;
+    }),
+    update: jest.fn(async ({ where, data, select }: any) => {
+      const found = users.find((item) => item.id === where.id);
+      if (!found) throw { code: 'P2025' };
+      Object.assign(found, data, { updatedAt: new Date() });
+      return select ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : found;
     }),
   };
   const dataset = {
@@ -51,6 +59,12 @@ function memoryDatabase() {
       if (index < 0) return { count: 0 };
       datasets.splice(index, 1);
       for (let row = rows.length - 1; row >= 0; row--) if (rows[row].datasetId === where.id) rows.splice(row, 1);
+      return { count: 1 };
+    }),
+    updateMany: jest.fn(async ({ where, data }: any) => {
+      const found = datasets.find((item) => item.id === where.id && item.userId === where.userId);
+      if (!found) return { count: 0 };
+      Object.assign(found, data, { updatedAt: new Date() });
       return { count: 1 };
     }),
   };
@@ -89,8 +103,25 @@ function memoryDatabase() {
       return { count: 1 };
     }),
   });
+  const uploadedFile = {
+    create: jest.fn(async ({ data, select }: any) => {
+      const created = { id: `40000000-0000-4000-8000-${String(uploadedFiles.length + 1).padStart(12, '0')}`, ...data, createdAt: new Date() };
+      uploadedFiles.push(created);
+      return select ? Object.fromEntries(Object.keys(select).map((key) => [key, created[key]])) : created;
+    }),
+    findFirst: jest.fn(async ({ where, select }: any) => {
+      const found = uploadedFiles.find((item) => item.id === where.id && item.userId === where.userId);
+      return found && select ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : found ?? null;
+    }),
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const index = uploadedFiles.findIndex((item) => item.id === where.id && item.userId === where.userId);
+      if (index < 0) return { count: 0 };
+      uploadedFiles.splice(index, 1);
+      return { count: 1 };
+    }),
+  };
   return {
-    user, dataset, datasetRow,
+    user, dataset, datasetRow, uploadedFile,
     savedVisualization: artifactDelegate(visualizations, '20000000'),
     savedReport: artifactDelegate(reports, '30000000'),
     $transaction: jest.fn(async (operation: any) => typeof operation === 'function'
@@ -102,11 +133,30 @@ function memoryDatabase() {
 describe('Auth and dataset ownership (e2e with isolated in-memory database)', () => {
   let app: INestApplication<App>;
   let db: ReturnType<typeof memoryDatabase>;
+  const files = new Map<string, Buffer>();
+  const storage = {
+    store: jest.fn(async (buffer: Buffer, extension: string) => {
+      const key = `50000000-0000-4000-8000-${String(files.size + 1).padStart(12, '0')}${extension}`;
+      files.set(key, buffer);
+      return key;
+    }),
+    read: jest.fn(async (key: string) => {
+      const buffer = files.get(key);
+      if (!buffer) throw Object.assign(new Error('Missing file'), { code: 'ENOENT' });
+      return buffer;
+    }),
+    remove: jest.fn(async (key: string) => { files.delete(key); }),
+  };
 
   beforeEach(async () => {
+    files.clear();
+    storage.store.mockClear();
+    storage.read.mockClear();
+    storage.remove.mockClear();
     db = memoryDatabase();
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService).useValue(db)
+      .overrideProvider(FileStorageService).useValue(storage)
       .compile();
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
@@ -154,6 +204,67 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
     expect(me.body.data.user).not.toHaveProperty('passwordHash');
   });
 
+  it('updates the authenticated profile and changes passwords only after verifying the current password', async () => {
+    await register('profileuser', 'profile@example.com');
+    const token = await login('profileuser');
+    await request(app.getHttpServer()).get('/users/me').expect(401);
+    const updated = await request(app.getHttpServer()).patch('/users/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Profile User', username: 'profileuser2', email: 'PROFILE@example.com', profilePhotoUrl: 'https://cdn.example.com/profile.jpg' })
+      .expect(200);
+    expect(updated.body.data.user).toMatchObject({
+      fullName: 'Profile User',
+      username: 'profileuser2',
+      email: 'profile@example.com',
+      profilePhotoUrl: 'https://cdn.example.com/profile.jpg',
+      accountStatus: 'active',
+    });
+    expect(updated.body.data.user).not.toHaveProperty('passwordHash');
+    await request(app.getHttpServer()).patch('/users/me/password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'wrong-password', newPassword: 'next-secure-pass-456' })
+      .expect(401);
+    await request(app.getHttpServer()).patch('/users/me/password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'secure-pass-123', newPassword: 'next-secure-pass-456' })
+      .expect(200);
+    await request(app.getHttpServer()).post('/auth/login')
+      .send({ identifier: 'profileuser2', password: 'secure-pass-123' }).expect(401);
+    await request(app.getHttpServer()).post('/auth/login')
+      .send({ identifier: 'profileuser2', password: 'next-secure-pass-456' }).expect(201);
+    await request(app.getHttpServer()).post('/auth/logout')
+      .set('Authorization', `Bearer ${token}`).expect(201);
+  });
+
+  it('persists image uploads and restricts retrieval and deletion to the file owner', async () => {
+    await register('imageowner', 'imageowner@example.com');
+    const ownerToken = await login('imageowner');
+    await register('imageguest', 'imageguest@example.com');
+    const guestToken = await login('imageguest');
+    const png = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png, 0);
+    png.write('IHDR', 12, 'ascii');
+    png.writeUInt32BE(1, 16);
+    png.writeUInt32BE(1, 20);
+    const uploaded = await request(app.getHttpServer()).post('/upload')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .attach('file', png, { filename: 'avatar.png', contentType: 'image/png' })
+      .expect(201);
+    const fileId = uploaded.body.id as string;
+    expect(uploaded.body).toMatchObject({ originalName: 'avatar.png', mimeType: 'image/png' });
+    expect(files.size).toBe(1);
+    await request(app.getHttpServer()).get(`/upload/${fileId}`)
+      .set('Authorization', `Bearer ${guestToken}`).expect(404);
+    await request(app.getHttpServer()).delete(`/upload/${fileId}`)
+      .set('Authorization', `Bearer ${guestToken}`).expect(404);
+    await request(app.getHttpServer()).get(`/upload/${fileId}`)
+      .set('Authorization', `Bearer ${ownerToken}`).expect(200)
+      .expect('Content-Disposition', /attachment/);
+    await request(app.getHttpServer()).delete(`/upload/${fileId}`)
+      .set('Authorization', `Bearer ${ownerToken}`).expect(200);
+    expect(files.size).toBe(0);
+  });
+
   it('requires a valid token and enforces dataset ownership across upload, list, detail, preview and delete', async () => {
     await request(app.getHttpServer()).get('/datasets').expect(401);
     await request(app.getHttpServer()).get('/datasets/10000000-0000-4000-8000-000000000001/analysis').expect(401);
@@ -166,6 +277,20 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
       .attach('file', Buffer.from('place,value\nNorth,2\nSouth,3\n'), { filename: 'custom.csv', contentType: 'text/csv' })
       .expect(201);
     const id = uploaded.body.dataset.id as string;
+    expect(uploaded.body.dataset).not.toHaveProperty('storageKey');
+    expect(files.size).toBe(1);
+    const downloaded = await request(app.getHttpServer()).get(`/datasets/${id}/download`)
+      .set('Authorization', `Bearer ${tokenA}`).expect(200);
+    expect(downloaded.text).toBe('place,value\nNorth,2\nSouth,3\n');
+    await request(app.getHttpServer()).get(`/datasets/${id}/download`)
+      .set('Authorization', `Bearer ${tokenB}`).expect(404);
+    await request(app.getHttpServer()).patch(`/datasets/${id}`)
+      .set('Authorization', `Bearer ${tokenB}`)
+      .send({ name: 'Hijack' }).expect(404);
+    const renamed = await request(app.getHttpServer()).patch(`/datasets/${id}`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ name: 'Renamed dataset' }).expect(200);
+    expect(renamed.body.data.name).toBe('Renamed dataset');
     expect(uploaded.body.profiling.totalRows).toBe(2);
     const analysis = await request(app.getHttpServer()).get(`/datasets/${id}/analysis`)
       .set('Authorization', `Bearer ${tokenA}`).expect(200);
@@ -206,6 +331,7 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
       .send({ metrics: [{ column: 'value', operation: 'sum' }] }).expect(404);
     await request(app.getHttpServer()).delete(`/datasets/${id}`).set('Authorization', `Bearer ${tokenB}`).expect(404);
     await request(app.getHttpServer()).delete(`/datasets/${id}`).set('Authorization', `Bearer ${tokenA}`).expect(200);
+    expect(files.size).toBe(0);
     await request(app.getHttpServer()).get(`/datasets/${id}`).set('Authorization', `Bearer ${tokenA}`).expect(404);
     await request(app.getHttpServer()).get('/datasets').set('Authorization', 'Bearer invalid.token.value').expect(401);
   });

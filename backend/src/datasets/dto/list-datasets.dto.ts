@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class ListDatasetsDto {
@@ -20,4 +20,16 @@ export class ListDatasetsDto {
   @IsString()
   @MaxLength(100)
   search?: string;
+
+  @IsOptional()
+  @IsIn(['createdAt', 'name', 'fileSize', 'rowCount'])
+  sortBy: 'createdAt' | 'name' | 'fileSize' | 'rowCount' = 'createdAt';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder: 'asc' | 'desc' = 'desc';
+
+  @IsOptional()
+  @IsIn(['csv', 'xlsx', 'xls'])
+  fileType?: 'csv' | 'xlsx' | 'xls';
 }

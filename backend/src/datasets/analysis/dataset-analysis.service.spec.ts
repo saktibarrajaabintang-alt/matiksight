@@ -90,6 +90,11 @@ describe('DatasetAnalysisService', () => {
       chartType: ChartType.Scatter, xAxis: 'amount', yAxis: 'cost',
     });
     expect(scatter.data).toEqual([{ amount: 10, cost: 5 }, { amount: 20, cost: 10 }, { amount: 30, cost: 15 }]);
+    const donut = await service.visualizationData('00000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', {
+      chartType: ChartType.Donut, xAxis: 'region', yAxis: 'amount', aggregation: AggregationOperation.Sum,
+    });
+    expect(donut.chart.type).toBe(ChartType.Donut);
+    expect(donut.data).toEqual([{ region: 'North', value: 40 }, { region: 'South', value: 20 }]);
   });
 
   it('rejects invalid columns, unsupported metric types, incompatible charts, and foreign datasets', async () => {

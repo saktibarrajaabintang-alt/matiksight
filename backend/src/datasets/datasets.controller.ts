@@ -1,15 +1,18 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, StreamableFile, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../auth/jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { UploadFile } from '../upload/upload-file.interface';
 import { ListDatasetsDto } from './dto/list-datasets.dto';
 import { PreviewDatasetDto } from './dto/preview-dataset.dto';
+import { PatchDatasetDto } from './dto/patch-dataset.dto';
 import { DatasetsService } from './datasets.service';
 import { DatasetAnalysisService } from './analysis/dataset-analysis.service';
 import { AggregateRequestDto, VisualizationRequestDto } from './analysis/dto/analysis-request.dto';
-import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiConsumes, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { ApiEndpointDocs, ApiJsonRequest, ApiListQuery, ApiMultipartFileRequest, ApiUuidPath } from '../swagger/api-contract';
+import { attachmentContentDisposition } from '../security/content-disposition';
 
 const scalarValueSchema = {
   oneOf: [
@@ -38,7 +41,7 @@ const visualizationResponseSchema = {
   type: 'object', required: ['success', 'chart', 'data'],
   properties: {
     success: { type: 'boolean' },
-    chart: { type: 'object', properties: { type: { type: 'string', enum: ['bar', 'line', 'pie', 'area', 'scatter'] }, xAxis: { type: 'string' }, yAxis: { type: 'string' }, aggregation: { type: 'string', nullable: true }, groupBy: { type: 'array', items: { type: 'string' } }, totalGroups: { type: 'integer' }, limit: { type: 'integer' } } },
+    chart: { type: 'object', properties: { type: { type: 'string', enum: ['bar', 'line', 'pie', 'donut', 'area', 'scatter'] }, xAxis: { type: 'string' }, yAxis: { type: 'string' }, aggregation: { type: 'string', nullable: true }, groupBy: { type: 'array', items: { type: 'string' } }, totalGroups: { type: 'integer' }, limit: { type: 'integer' } } },
     data: { type: 'array', items: { type: 'object', additionalProperties: scalarValueSchema } },
   },
 };
@@ -75,8 +78,27 @@ export class DatasetsController {
     return this.datasets.create(request.user.id, file);
   }
 
+  @Post('upload')
+  @ApiConsumes('multipart/form-data')
+  @ApiMultipartFileRequest()
+  @ApiEndpointDocs({
+    summary: 'Upload a dataset (explicit upload path)',
+    description: 'Alias for POST /datasets; uses the same ownership checks, processing, storage, and response contract.',
+    successStatus: 201,
+    successDescription: 'Dataset and profiling response.',
+    successExample: { success: true, dataset: { id: '<uuid>', name: 'custom', originalFilename: 'custom.csv', fileType: 'csv', fileSize: 42, rowCount: 1, columnCount: 2, createdAt: '2026-11-03T00:00:00.000Z' }, columns: ['area', 'measure'], totalRows: 1, preview: [{ area: 'North', measure: '2' }] },
+    errors: [400, 401, 413, 415, 500],
+  })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
+  uploadAlias(@Req() request: AuthenticatedRequest, @UploadedFile() file?: UploadFile) {
+    return this.datasets.create(request.user.id, file);
+  }
+
   @Get()
   @ApiListQuery(true)
+  @ApiQuery({ name: 'fileType', required: false, enum: ['csv', 'xlsx', 'xls'] })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'name', 'fileSize', 'rowCount'], example: 'createdAt' })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'], example: 'desc' })
   @ApiEndpointDocs({
     summary: 'List owned datasets',
     description: 'Requires Bearer JWT. `page` defaults to 1, `limit` to 20 and is capped at 100; optional `search` matches dataset name or filename.',
@@ -104,6 +126,30 @@ export class DatasetsController {
     return this.datasets.preview(request.user.id, id, query);
   }
 
+  @Get(':id/download')
+  @ApiUuidPath()
+  @ApiEndpointDocs({
+    summary: 'Download the original dataset file',
+    description: 'Requires ****** and dataset ownership. Returns the original file as an attachment without exposing a filesystem path.',
+    successStatus: 200,
+    successDescription: 'Original uploaded file.',
+    successExample: { message: 'Binary file response' },
+    successContentType: 'application/octet-stream',
+    errors: [401, 404, 500],
+  })
+  async download(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const file = await this.datasets.download(request.user.id, id);
+    response.setHeader('Content-Type', file.mimeType);
+    response.setHeader('Content-Length', file.buffer.length);
+    response.setHeader('Content-Disposition', attachmentContentDisposition(file.filename));
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    return new StreamableFile(file.buffer);
+  }
+
   @Get(':id')
   @ApiUuidPath()
   @ApiEndpointDocs({
@@ -116,6 +162,25 @@ export class DatasetsController {
   })
   detail(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
     return this.datasets.findOne(request.user.id, id);
+  }
+
+  @Patch(':id')
+  @ApiUuidPath()
+  @ApiJsonRequest({ type: 'object', required: ['name'], properties: { name: { type: 'string', minLength: 1, maxLength: 255 } } }, { name: 'Renamed dataset' })
+  @ApiEndpointDocs({
+    summary: 'Rename a dataset',
+    description: 'Requires ****** and dataset ownership. Only the display name changes; the original filename and file remain unchanged.',
+    successStatus: 200,
+    successDescription: 'Updated dataset metadata.',
+    successExample: { success: true, data: { id: '<uuid>', name: 'Renamed dataset', originalFilename: 'custom.csv', fileType: 'csv' } },
+    errors: [400, 401, 404, 500],
+  })
+  update(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() input: PatchDatasetDto,
+  ) {
+    return this.datasets.update(request.user.id, id, input);
   }
 
   @Delete(':id')
@@ -143,6 +208,20 @@ export class DatasetsController {
     errors: [401, 404, 413, 500],
   })
   analysis(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    return this.analysisService.analysis(request.user.id, id);
+  }
+
+  @Post(':id/analyze')
+  @ApiUuidPath()
+  @ApiEndpointDocs({
+    summary: 'Analyze a dataset (explicit analyze path)',
+    description: 'Alias for GET /datasets/:id/analysis with the same ownership and scan limits.',
+    successStatus: 201,
+    successDescription: 'Overview, column statistics, data quality and recommendations.',
+    successExample: { success: true, data: { overview: { id: '<uuid>', name: 'custom', totalRows: 120, totalColumns: 3 }, columns: [] } },
+    errors: [401, 404, 413, 500],
+  })
+  analyze(@Req() request: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
     return this.analysisService.analysis(request.user.id, id);
   }
 
@@ -189,7 +268,7 @@ export class DatasetsController {
   @ApiJsonRequest({
     type: 'object', required: ['chartType', 'xAxis', 'yAxis'],
     properties: {
-      chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'area', 'scatter'] },
+      chartType: { type: 'string', enum: ['bar', 'line', 'pie', 'donut', 'area', 'scatter'] },
       xAxis: { type: 'string' }, yAxis: { type: 'string' },
       groupBy: { type: 'array', maxItems: 3, items: { type: 'string' } },
       aggregation: { type: 'string', enum: ['count', 'sum', 'average', 'minimum', 'maximum', 'distinct_count'], default: 'average' },
