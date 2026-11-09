@@ -8,11 +8,12 @@ import {
 import type { Request } from 'express';
 
 type RateWindow = { count: number; resetAt: number };
-type AuthRoute = 'register' | 'login';
+type AuthRoute = 'register' | 'login' | 'google';
 
 const POLICIES: Record<AuthRoute, { limit: number; windowMs: number }> = {
   register: { limit: 5, windowMs: 15 * 60 * 1000 },
   login: { limit: 10, windowMs: 15 * 60 * 1000 },
+  google: { limit: 10, windowMs: 15 * 60 * 1000 },
 };
 const MAX_TRACKED_CLIENTS = 10_000;
 
@@ -23,11 +24,15 @@ export class AuthRateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     const route = request.route?.path;
-    if (typeof route !== 'string' || !route.endsWith('/register') && !route.endsWith('/login')) {
+    if (typeof route !== 'string' || !['/register', '/login', '/google', '/google/link'].some((suffix) => route.endsWith(suffix))) {
       return true;
     }
 
-    const endpoint: AuthRoute = route.endsWith('/register') ? 'register' : 'login';
+    const endpoint: AuthRoute = route.endsWith('/register')
+      ? 'register'
+      : route.endsWith('/google') || route.endsWith('/google/link')
+        ? 'google'
+        : 'login';
     const policy = POLICIES[endpoint];
     const now = Date.now();
     const key = `${request.ip}:${endpoint}`;

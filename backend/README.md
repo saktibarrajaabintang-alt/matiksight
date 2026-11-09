@@ -59,7 +59,8 @@ Register menerima username 3–30 karakter (huruf, angka, underscore), email,
 dan password minimal 8 karakter. Password disimpan sebagai bcrypt hash. Batas
 password adalah 72 byte UTF-8 agar bcrypt tidak mengabaikan byte sisanya.
 Register dibatasi 5 request per IP dalam 15 menit; login dibatasi 10 request per
-IP dalam 15 menit. Ketika terlampaui, API mengembalikan HTTP 429 dan header
+IP dalam 15 menit. Login Google dibatasi 10 request per IP dalam 15 menit.
+Ketika terlampaui, API mengembalikan HTTP 429 dan header
 `Retry-After`.
 
 ```http
@@ -93,6 +94,26 @@ Authorization: Bearer <accessToken>
 membutuhkan Bearer token dan hanya mengembalikan dataset milik pengguna itu.
 Token salah atau kedaluwarsa menghasilkan HTTP 401. Kredensial login salah
 menghasilkan pesan generik yang tidak membedakan akun atau password.
+
+### Login Google
+
+Set `GOOGLE_CLIENT_ID` ke OAuth 2.0 Web client ID yang sama dengan client yang
+meminta Google ID token. `POST /auth/google` memverifikasi signature, issuer,
+expiry, audience, dan email terverifikasi Google, lalu mengembalikan response
+serta JWT MatikSight satu jam yang sama seperti `POST /auth/login`. Akun Google
+baru mendapat username unik dan password acak yang tidak dipakai untuk login
+lokal. Subject Google disimpan agar login berikutnya tetap terikat pada
+identitas yang sama. Email yang sudah dimiliki akun lokal tidak otomatis
+ditautkan: login Google mengembalikan 409. Masuk dengan akun lokal, lalu gunakan
+`POST /auth/google/link` bersama bearer token lokal dan ID token Google. Email
+terverifikasi Google harus sama dengan email profil akun tersebut.
+
+Schema membutuhkan kolom nullable `google_subject`. Migration baru sudah
+disiapkan tetapi **belum diterapkan**. Sebelum menerapkannya, verifikasi target
+database dari konfigurasi `DATABASE_URL` di environment backend dan minta
+persetujuan untuk database tersebut. Setelah disetujui, jalankan
+`npm run prisma:deploy` dari folder `backend/`; jangan gunakan
+`prisma:migrate` untuk menerapkan migration ini di lingkungan deployment.
 
 ## Dataset management API
 

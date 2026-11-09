@@ -8,6 +8,8 @@ import {
   Sun, UserRound, Zap,
 } from "lucide-react";
 import { useApp } from "@/components/app-provider";
+import { ApiError } from "@/lib/api-client";
+import { AuthenticationUnavailableError, signInWithGoogle } from "@/lib/auth-service";
 
 type AuthMode = "login" | "register";
 type FieldErrors = Record<string, string>;
@@ -153,8 +155,13 @@ function AuthShell({ children }: { children: ReactNode }) {
 }
 
 function getServiceError(error: unknown) {
-  if (error instanceof Error) return error.message;
+  if (error instanceof AuthenticationUnavailableError) return error.message;
   console.error("MatikSight authentication request failed.", error);
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof Error && error.message === "Failed to fetch") {
+    return "Tidak dapat menghubungi server MatikSight. Periksa koneksi dan alamat API.";
+  }
+  if (error instanceof Error) return error.message;
   return "Terjadi kesalahan saat menghubungi layanan autentikasi. Silakan coba lagi.";
 }
 
@@ -181,12 +188,21 @@ export function LoginPage() {
 
     setLoading(true);
     try {
-      await login(identifier, password, remember);
+      await login({ identifier, password, remember });
       router.replace("/dashboard");
     } catch (error) {
       setMessage(getServiceError(error));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const google = async () => {
+    setMessage("");
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setMessage(getServiceError(error));
     }
   };
 
@@ -202,7 +218,7 @@ export function LoginPage() {
           <button className="auth-submit" type="submit" disabled={loading}>{loading ? <span className="auth-spinner" /> : <><span className="auth-submit-arrow"><ArrowRight size={16} /></span>Masuk</>}</button>
         </form>
         <div className="auth-divider"><span />atau<span /></div>
-        <button className="auth-google" type="button" onClick={() => setMessage("Login Google belum tersedia. Silakan gunakan email atau username.")}><GoogleMark />Masuk dengan Google</button>
+        <button className="auth-google" type="button" onClick={google}><GoogleMark />Masuk dengan Google</button>
         <p className="auth-switch">Belum punya akun? <Link href="/register">Daftar sekarang</Link></p>
       </AuthCard>
     </AuthShell>
@@ -226,10 +242,10 @@ export function RegisterPage() {
     const password = String(formData.get("password") ?? "");
     const confirmation = String(formData.get("confirmation") ?? "");
     const nextErrors: FieldErrors = {};
-    if (name.length < 2) nextErrors.name = "Nama lengkap minimal 2 karakter.";
+    if (name.length < 2 || name.length > 120) nextErrors.name = "Nama lengkap harus memiliki 2–120 karakter.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) nextErrors.email = "Masukkan alamat email yang valid.";
     if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) nextErrors.username = "Username 3–30 karakter, gunakan huruf, angka, atau garis bawah.";
-    if (password.length < 8) nextErrors.password = "Password harus memiliki minimal 8 karakter.";
+    if (password.length < 8 || new TextEncoder().encode(password).length > 72) nextErrors.password = "Password harus memiliki minimal 8 karakter dan maksimal 72 byte UTF-8.";
     if (confirmation !== password) nextErrors.confirmation = "Konfirmasi password tidak cocok.";
     if (!acceptedTerms) nextErrors.terms = "Setujui syarat dan ketentuan untuk melanjutkan.";
     setErrors(nextErrors);
@@ -238,12 +254,21 @@ export function RegisterPage() {
 
     setLoading(true);
     try {
-      await register({ fullName: name, email, username, password });
+      await register({ name, email, username, password });
       router.replace("/dashboard");
     } catch (error) {
       setMessage(getServiceError(error));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const google = async () => {
+    setMessage("");
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setMessage(getServiceError(error));
     }
   };
 
@@ -262,7 +287,7 @@ export function RegisterPage() {
           <button className="auth-submit" type="submit" disabled={loading}>{loading ? <span className="auth-spinner" /> : <>Daftar Sekarang<ArrowRight size={17} /></>}</button>
         </form>
         <div className="auth-divider"><span />atau<span /></div>
-        <button className="auth-google" type="button" onClick={() => setMessage("Pendaftaran Google belum tersedia. Silakan gunakan formulir di atas.")}><GoogleMark />Daftar dengan Google</button>
+        <button className="auth-google" type="button" onClick={google}><GoogleMark />Daftar dengan Google</button>
         <p className="auth-switch">Sudah punya akun? <Link href="/login">Masuk sekarang</Link></p>
       </AuthCard>
     </AuthShell>

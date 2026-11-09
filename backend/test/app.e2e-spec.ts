@@ -1,5 +1,5 @@
 ﻿import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import * as XLSX from 'xlsx';
@@ -34,6 +34,7 @@ describe('AppController (e2e)', () => {
       .compile();
 
     app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
     app.useGlobalFilters(new SafeExceptionFilter());
     const swaggerConfig = new DocumentBuilder().setTitle('Test API').setVersion('1').addBearerAuth().build();
     SwaggerModule.setup('api', app, () => SwaggerModule.createDocument(app, swaggerConfig), { jsonDocumentUrl: 'api-json' });
@@ -80,6 +81,7 @@ describe('AppController (e2e)', () => {
     const expectedOperations: Array<[string, string]> = [
       ['/', 'get'], ['/health', 'get'],
       ['/auth/register', 'post'], ['/auth/login', 'post'], ['/auth/me', 'get'],
+      ['/auth/google', 'post'], ['/auth/google/link', 'post'],
       ['/upload', 'post'],
       ['/datasets', 'post'], ['/datasets', 'get'], ['/datasets/{id}', 'get'],
       ['/datasets/{id}', 'delete'], ['/datasets/{id}/preview', 'get'],
@@ -92,6 +94,7 @@ describe('AppController (e2e)', () => {
     ];
     const protectedOperations = new Set([
       'get /auth/me', 'post /upload', 'post /datasets', 'get /datasets',
+      'post /auth/google/link',
       'get /datasets/{id}', 'delete /datasets/{id}', 'get /datasets/{id}/preview',
       'get /datasets/{id}/analysis', 'post /datasets/{id}/aggregate',
       'post /datasets/{id}/visualizations/data', 'post /visualizations',
@@ -108,7 +111,7 @@ describe('AppController (e2e)', () => {
       expect(success.description).toBeTruthy();
       const successContent = Object.values(success.content ?? {}) as any[];
       expect(successContent.some((content) => content.schema?.example !== undefined)).toBe(true);
-      for (const status of ['400', '401', '404', '409', '413', '415', '429', '500']) {
+      for (const status of ['400', '401', '404', '409', '413', '415', '429', '500', '503']) {
         if (operation.responses[status]) {
           expect(operation.responses[status].content['application/json'].schema.properties.statusCode).toBeDefined();
           expect(operation.responses[status].content['application/json'].schema.example.statusCode).toBe(Number(status));
@@ -147,6 +150,17 @@ describe('AppController (e2e)', () => {
       size: content.length,
       mimeType: 'text/csv',
     });
+  });
+
+  it('exposes Google login publicly and protects Google account linking', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/google')
+      .send({})
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/auth/google/link')
+      .send({ idToken: 'google-id-token' })
+      .expect(401);
   });
 
   it('POST /datasets parses CSV and returns its preview', async () => {

@@ -1,9 +1,12 @@
 import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import type { User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { RegisterDto } from './dto/register.dto';
 import type { UpdateProfileDto } from './dto/update-profile.dto';
+import { GoogleTokenVerifier, type GoogleIdentity } from './google-token-verifier';
 
 const SAFE_USER_SELECT = {
   id: true,
@@ -18,7 +21,11 @@ const SAFE_USER_SELECT = {
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly jwt: JwtService,
+    private readonly googleTokens: GoogleTokenVerifier,
+  ) {}
 
   async register(input: RegisterDto) {
     try {
@@ -47,25 +54,61 @@ export class AuthService {
       ? await bcrypt.compare(password, user.passwordHash)
       : false;
     if (!valid || !user) throw new UnauthorizedException('Username/email atau password salah.');
-    const accessToken = await this.jwt.signAsync({ sub: user.id });
-    return {
-      success: true,
-      data: {
-        accessToken,
-        tokenType: 'Bearer',
-        expiresIn: '1h',
-        user: {
-          id: user.id,
-          fullName: user.fullName,
-          username: user.username,
-          email: user.email,
-          profilePhotoUrl: user.profilePhotoUrl,
-          accountStatus: user.accountStatus,
-          createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
-        },
-      },
-    };
+    return this.createLoginResponse(user);
+  }
+
+  async googleLogin(idToken: string) {
+    const identity = await this.googleTokens.verify(idToken);
+    let user = await this.prisma.user.findUnique({ where: { googleSubject: identity.subject } });
+    if (!user) {
+      user = await this.prisma.user.findUnique({ where: { email: identity.email } });
+      if (user) {
+        if (user.accountStatus !== 'active') {
+          throw new UnauthorizedException('Token Google tidak valid atau akun tidak aktif.');
+        }
+        throw new ConflictException('Email Google sudah digunakan. Masuk dengan akun lokal, lalu tautkan Google dari sesi terautentikasi.');
+      }
+      user = await this.createGoogleAccount(identity);
+    }
+    if (!user || user.accountStatus !== 'active') {
+      throw new UnauthorizedException('Token Google tidak valid atau akun tidak aktif.');
+    }
+    return this.createLoginResponse(user);
+  }
+
+  async linkGoogleAccount(userId: string, idToken: string) {
+    const identity = await this.googleTokens.verify(idToken);
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.accountStatus !== 'active') {
+      throw new UnauthorizedException('Akun tidak tersedia.');
+    }
+    if (user.googleSubject === identity.subject) {
+      return { success: true, message: 'Akun Google berhasil ditautkan.' };
+    }
+    if (user.email.toLowerCase() !== identity.email) {
+      throw new ConflictException('Email Google harus sama dengan email akun MatikSight.');
+    }
+    const linkedUser = await this.prisma.user.findUnique({ where: { googleSubject: identity.subject } });
+    if (linkedUser && linkedUser.id !== user.id) {
+      throw new ConflictException('Akun Google sudah ditautkan ke akun MatikSight lain.');
+    }
+    if (user.googleSubject) {
+      throw new ConflictException('Akun MatikSight sudah ditautkan ke akun Google lain.');
+    }
+    if (!user.googleSubject) {
+      try {
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: { googleSubject: identity.subject },
+        });
+      } catch (error) {
+        if (this.isUniqueViolation(error)) {
+          throw new ConflictException('Akun Google sudah ditautkan ke akun MatikSight lain.');
+        }
+        throw error;
+      }
+    }
+    return { success: true, message: 'Akun Google berhasil ditautkan.' };
   }
 
   async me(userId: string) {
@@ -115,5 +158,62 @@ export class AuthService {
 
   private isUniqueViolation(error: unknown): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
+  }
+
+  private async createGoogleAccount(identity: GoogleIdentity) {
+    const stem = identity.email.split('@')[0]
+      .normalize('NFKD')
+      .replace(/[^a-zA-Z0-9_]/g, '')
+      .slice(0, 20) || 'googleuser';
+    const passwordHash = await bcrypt.hash(randomBytes(32).toString('base64url'), 12);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        return await this.prisma.user.create({
+          data: {
+            fullName: identity.fullName,
+            username: `${stem}_${randomBytes(4).toString('hex')}`,
+            email: identity.email,
+            googleSubject: identity.subject,
+            passwordHash,
+            profilePhotoUrl: identity.profilePhotoUrl,
+          },
+        });
+      } catch (error) {
+        if (!this.isUniqueViolation(error)) throw error;
+        const bySubject = await this.prisma.user.findUnique({ where: { googleSubject: identity.subject } });
+        if (bySubject) return bySubject;
+        const byEmail = await this.prisma.user.findUnique({ where: { email: identity.email } });
+        if (byEmail) {
+          if (byEmail.accountStatus !== 'active') {
+            throw new UnauthorizedException('Token Google tidak valid atau akun tidak aktif.');
+          }
+          throw new ConflictException('Email Google sudah digunakan. Masuk dengan akun lokal, lalu tautkan Google dari sesi terautentikasi.');
+        }
+      }
+    }
+    throw new ConflictException('Akun Google tidak dapat dibuat saat ini.');
+  }
+
+  private async createLoginResponse(user: User) {
+    const accessToken = await this.jwt.signAsync({ sub: user.id });
+    return {
+      success: true,
+      data: {
+        accessToken,
+        tokenType: 'Bearer',
+        expiresIn: '1h',
+        user: {
+          id: user.id,
+          fullName: user.fullName,
+          username: user.username,
+          email: user.email,
+          profilePhotoUrl: user.profilePhotoUrl,
+          accountStatus: user.accountStatus,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      },
+    };
   }
 }

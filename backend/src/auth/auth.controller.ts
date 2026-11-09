@@ -4,6 +4,7 @@ import type { AuthenticatedRequest } from './jwt-auth.guard';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthRateLimitGuard } from './auth-rate-limit.guard';
 import { ApiEndpointDocs, ApiJsonRequest } from '../swagger/api-contract';
@@ -54,6 +55,49 @@ export class AuthController {
   }, { identifier: 'analyst01', password: 'secure-pass-123' })
   login(@Body() input: LoginDto) {
     return this.auth.login(input.identifier, input.password);
+  }
+
+  @Post('google')
+  @UseGuards(AuthRateLimitGuard)
+  @ApiEndpointDocs({
+    summary: 'Log in with Google',
+    description: 'Verifies a Google ID token for the configured GOOGLE_CLIENT_ID and returns the same one-hour MatikSight bearer token and profile as local login. Limited to 10 requests per IP per 15 minutes.',
+    successStatus: 201,
+    successDescription: 'Returns a MatikSight bearer token and public user profile.',
+    successExample: { success: true, data: { accessToken: '<JWT>', tokenType: 'Bearer', expiresIn: '1h', user: { id: '<uuid>', fullName: 'Analyst One', username: 'analyst01', email: 'analyst@example.com', profilePhotoUrl: null, accountStatus: 'active', createdAt: '2026-11-03T00:00:00.000Z', updatedAt: '2026-11-03T00:00:00.000Z' } } },
+    errors: [400, 401, 409, 429, 503],
+  })
+  @ApiJsonRequest({
+    type: 'object',
+    required: ['idToken'],
+    properties: {
+      idToken: { type: 'string', minLength: 1, maxLength: 8192, description: 'Google OpenID Connect ID token issued for the configured web client.' },
+    },
+  }, { idToken: '<Google ID token>' })
+  googleLogin(@Body() input: GoogleLoginDto) {
+    return this.auth.googleLogin(input.idToken);
+  }
+
+  @Post('google/link')
+  @UseGuards(JwtAuthGuard, AuthRateLimitGuard)
+  @ApiBearerAuth()
+  @ApiEndpointDocs({
+    summary: 'Link a Google identity to the current account',
+    description: 'Requires a MatikSight bearer token and a verified Google ID token whose email matches the current account. Limited to 10 requests per IP per 15 minutes.',
+    successStatus: 201,
+    successDescription: 'Google identity linked to the authenticated account.',
+    successExample: { success: true, message: 'Akun Google berhasil ditautkan.' },
+    errors: [400, 401, 409, 429, 503],
+  })
+  @ApiJsonRequest({
+    type: 'object',
+    required: ['idToken'],
+    properties: {
+      idToken: { type: 'string', minLength: 1, maxLength: 8192, description: 'Google OpenID Connect ID token with a verified email matching the authenticated MatikSight account.' },
+    },
+  }, { idToken: '<Google ID token>' })
+  linkGoogle(@Req() request: AuthenticatedRequest, @Body() input: GoogleLoginDto) {
+    return this.auth.linkGoogleAccount(request.user.id, input.idToken);
   }
 
   @Get('me')

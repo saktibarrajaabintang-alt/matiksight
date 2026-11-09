@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
 import { AppProvider } from "@/components/app-provider";
@@ -29,8 +29,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Script id="theme-bootstrap" strategy="beforeInteractive">{`
           (function () {
             try {
-              var saved = localStorage.getItem("matiksight-preferences");
-              var theme = saved ? JSON.parse(saved).theme : "Terang";
+              var preferences = localStorage.getItem("matiksight-preferences-v1");
+              var workspace = preferences ? null : localStorage.getItem("matiksight-workspace-v2") || localStorage.getItem("matiksight-workspace-v1");
+              var theme = preferences ? JSON.parse(preferences).theme : workspace ? JSON.parse(workspace).settings?.theme : "Terang";
               var dark = theme === "Gelap" || (theme === "Sistem" && window.matchMedia("(prefers-color-scheme: dark)").matches);
               document.documentElement.dataset.theme = dark ? "dark" : "light";
             } catch (error) {
@@ -38,7 +39,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             }
           })();
         `}</Script>
-        <AppProvider><Suspense fallback={<main className="app-shell-loading" aria-busy="true">Memuat MatikSight…</main>}><AppShell>{children}</AppShell></Suspense></AppProvider>
+        <AppProvider><Suspense fallback={<main className="auth-route" aria-live="polite">Memuat MatikSight...</main>}><AppShell>{children}</AppShell></Suspense></AppProvider>
       </body>
     </html>
   );

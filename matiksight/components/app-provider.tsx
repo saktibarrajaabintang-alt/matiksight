@@ -1,423 +1,537 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/api";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ColumnMetadata, DataRow, Dataset, DatasetColumn, DatasetColumnType,
-  DatasetProfile, SavedReport, Visualization, ChartType,
+  AggregationOperation,
+  ChartPeriod,
+  Dataset,
+  DatasetColumn,
+  DatasetColumnType,
+  DatasetProfile,
+  DatasetRecord,
+  Visualization,
 } from "@/lib/data-utils";
+import { LoginCredentials, RegistrationDetails, registerAccount, signIn } from "@/lib/auth-service";
+import {
+  apiRequest,
+  AuthUser,
+  BackendRow,
+  BackendDataset,
+  BackendDatasetPreviewResponse,
+  BackendUploadResponse,
+  BackendVisualization,
+  clearAccessToken,
+  fetchAllPages,
+  hasAccessToken,
+} from "@/lib/api-client";
 
 export type Settings = { name: string; email: string; theme: "Terang" | "Gelap" | "Sistem"; defaultChart: string; pageSize: number };
-type UserProfile = { id: string; fullName: string | null; username: string; email: string };
-type DatasetRecord = {
-  id: string; name: string; originalFilename: string; fileType: string; fileSize: number;
-  rowCount: number; columns?: string[]; columnMetadata?: ColumnMetadata[]; createdAt: string;
-};
-type VisualizationRecord = {
-  id: string; datasetId: string; name: string; chartType: string;
-  configuration: { chartType: string; xAxis: string; yAxis: string; aggregation?: string; period?: string };
-  createdAt: string;
-};
-type ApiList<T> = { success: boolean; data: T[] };
-type ApiProfile = { success: boolean; data: { user: UserProfile } };
-type AuthResponse = { success: boolean; data: { accessToken: string; user: UserProfile } };
+type AuthResponse = { success: true; data: { user: AuthUser } };
+type BackendDatasetDetailResponse = { success: true; data: BackendDataset };
+type BackendVisualizationResponse = { success: true; data: BackendVisualization };
+type ProfileUpdate = Pick<Settings, "name" | "email">;
+
 type AppContextValue = {
   datasets: Dataset[];
   visualizations: Visualization[];
-  reports: SavedReport[];
   settings: Settings;
   toast: string;
-  token: string | null;
+  toastClosing: boolean;
+  user: AuthUser | null;
   authReady: boolean;
-  loading: boolean;
-  rows: DataRow[];
-  columnMetadata: ColumnMetadata[];
-  addDataset: (file: File) => Promise<void>;
+  authError: string;
+  dataLoading: boolean;
+  uploadDataset: (file: File) => Promise<Dataset>;
   removeDataset: (id: string) => Promise<void>;
   saveVisualization: (visualization: Omit<Visualization, "id" | "createdAt">) => Promise<void>;
-  renameDataset: (id: string, name: string) => Promise<void>;
   updateVisualization: (id: string, updates: Partial<Visualization>) => Promise<void>;
   removeVisualization: (id: string) => Promise<void>;
-  saveReport: (datasetId: string, title: string, configuration: Record<string, unknown>, snapshot: Record<string, unknown>) => Promise<void>;
-  removeReport: (id: string) => Promise<void>;
-  updateSettings: (settings: Partial<Settings>) => Promise<void>;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  login: (identifier: string, password: string, remember?: boolean) => Promise<void>;
-  register: (input: { fullName: string; username: string; email: string; password: string }) => Promise<void>;
+  updateSettings: (settings: Partial<Settings>) => void;
+  updateProfile: (profile: ProfileUpdate) => Promise<void>;
+  login: (credentials: LoginCredentials) => Promise<void>;
+  register: (details: RegistrationDetails) => Promise<void>;
   logout: () => Promise<void>;
   notify: (message: string) => void;
   currentDataset: Dataset | null;
   setCurrentDatasetId: (id: string) => void;
-  refreshDatasetPreview: (id: string) => Promise<void>;
+  rows: DatasetRecord[];
 };
 
-const tokenStorageKey = "matiksight-access-token";
-const settingsStorageKey = "matiksight-preferences";
+const preferencesKey = "matiksight-preferences-v1";
+const currentDatasetKey = "matiksight-current-dataset";
+const legacyStorageKey = "matiksight-workspace-v2";
 const defaultSettings: Settings = { name: "", email: "", theme: "Terang", defaultChart: "Bar", pageSize: 10 };
 const AppContext = createContext<AppContextValue | null>(null);
 
-function mapColumnType(type: string | undefined): DatasetColumnType {
-  switch (type?.toLowerCase()) {
-    case "number": return "decimal";
-    case "date": return "date";
-    case "datetime": return "datetime";
-    case "time": return "time";
-    case "boolean": return "boolean";
-    case "currency": return "currency";
-    case "percentage": return "percentage";
-    default: return "string";
+function applyTheme(theme: Settings["theme"]) {
+  const dark = theme === "Gelap" || (
+    theme === "Sistem" && window.matchMedia("(prefers-color-scheme: dark)").matches
+  );
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+}
+
+function normalizeColumnType(type: string): DatasetColumnType {
+  switch (type.toLowerCase()) {
+    case "integer":
+      return "integer";
+    case "decimal":
+    case "number":
+      return "decimal";
+    case "currency":
+      return "currency";
+    case "percentage":
+      return "percentage";
+    case "date":
+      return "date";
+    case "datetime":
+      return "datetime";
+    case "time":
+      return "time";
+    case "boolean":
+      return "boolean";
+    default:
+      return "string";
   }
 }
 
-function mapColumns(names: string[] = [], metadata: ColumnMetadata[] = []): DatasetColumn[] {
-  return names.map((name, index) => {
-    const column = metadata.find((item) => item.name === name);
+function datasetColumns(dataset: BackendDataset): DatasetColumn[] {
+  const names = dataset.columns ?? [];
+  const metadata = dataset.columnMetadata ?? [];
+  const count = Math.max(names.length, metadata.length, dataset.columnCount);
+  return Array.from({ length: count }, (_, index) => {
+    const column = metadata[index];
     return {
       key: String(index),
-      name,
-      type: mapColumnType(column?.type),
+      name: column?.name ?? names[index] ?? `Kolom ${index + 1}`,
+      type: normalizeColumnType(column?.type ?? "string"),
       missingValues: column?.nullCount ?? 0,
     };
   });
 }
 
-function mapProfile(columns: DatasetColumn[], metadata: ColumnMetadata[], rowCount: number): DatasetProfile {
-  const numericColumns = columns.flatMap((column) => {
-    const source = metadata.find((item) => item.name === column.name);
-    if (column.type !== "integer" && column.type !== "decimal" && column.type !== "currency" && column.type !== "percentage") return [];
-    const minimum = Number(source?.min);
-    const maximum = Number(source?.max);
-    const average = Number(source?.mean);
-    if (![minimum, maximum, average].every(Number.isFinite)) return [];
-    return [{ columnKey: column.key, minimum, maximum, average, sum: average * rowCount }];
+function numberValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function datasetProfile(dataset: BackendDataset, columns: DatasetColumn[]): DatasetProfile {
+  const metadata = dataset.columnMetadata ?? [];
+  const numericColumns = columns.flatMap((column, index) => {
+    if (!["integer", "decimal", "currency", "percentage"].includes(column.type)) return [];
+    const source = metadata[index];
+    const minimum = numberValue(source?.min);
+    const maximum = numberValue(source?.max);
+    const average = numberValue(source?.mean);
+    const count = Math.max(0, dataset.rowCount - (source?.nullCount ?? 0));
+    return [{
+      columnKey: column.key,
+      minimum: minimum ?? 0,
+      maximum: maximum ?? 0,
+      average: average ?? 0,
+      sum: (average ?? 0) * count,
+    }];
   });
-  const categoricalColumns = columns.flatMap((column) => {
-    const source = metadata.find((item) => item.name === column.name);
-    if (!source || !["category", "text", "string"].includes(source.type.toLowerCase())) return [];
-    return [{ columnKey: column.key, distinctValues: source.uniqueCount, topValues: [] }];
+  const categoricalColumns = columns.flatMap((column, index) => {
+    if (!["string", "time", "boolean"].includes(column.type)) return [];
+    return [{
+      columnKey: column.key,
+      distinctValues: metadata[index]?.uniqueCount ?? 0,
+      topValues: [],
+    }];
   });
-  const dateRanges = columns.flatMap((column) => {
-    const source = metadata.find((item) => item.name === column.name);
-    if (!source || !["date", "datetime"].includes(source.type.toLowerCase()) || source.min === undefined || source.max === undefined) return [];
-    return [{ columnKey: column.key, start: String(source.min), end: String(source.max) }];
+  const names = dataset.columns ?? [];
+  const dateRanges = (dataset.profiling?.dateRange ?? []).flatMap((range) => {
+    const index = names.indexOf(range.column);
+    return index < 0 ? [] : [{ columnKey: String(index), start: range.min, end: range.max }];
   });
   return {
-    rowCount,
-    columnCount: columns.length,
-    missingValues: columns.reduce((total, column) => total + column.missingValues, 0),
+    rowCount: dataset.rowCount,
+    columnCount: dataset.columnCount,
+    missingValues: dataset.profiling?.missingValues
+      ?? metadata.reduce((total, column) => total + (column.nullCount ?? 0), 0),
     numericColumns,
     categoricalColumns,
     dateRanges,
   };
 }
 
-function mapDataset(record: DatasetRecord): Dataset {
-  const metadata = record.columnMetadata ?? [];
-  const columns = mapColumns(record.columns, metadata);
+function rowsFromBackend(rows: BackendRow[], columns: DatasetColumn[]): DatasetRecord[] {
+  return rows.map((row) => Array.isArray(row)
+    ? row
+    : columns.map((column) => row[column.name]));
+}
+
+function toDataset(source: BackendDataset, rawRows: BackendRow[] = []): Dataset {
+  const columns = datasetColumns(source);
+  const uploaded = new Date(source.createdAt);
   return {
-    id: record.id,
-    name: record.name,
-    size: Math.round(record.fileSize / 1024),
-    type: record.fileType === "csv" ? "CSV" : "Excel",
-    rows: record.rowCount,
-    uploadedAt: new Date(record.createdAt).toLocaleString("id-ID"),
-    createdAt: record.createdAt,
-    status: "Selesai",
+    id: source.id,
+    name: source.originalFilename || source.name,
+    size: Math.ceil(source.fileSize / 1024),
+    type: source.fileType === "csv" ? "CSV" : "Excel",
+    rows: source.rowCount,
+    data: rowsFromBackend(rawRows, columns),
     columns,
-    columnMetadata: metadata,
-    profile: mapProfile(columns, metadata, record.rowCount),
+    profile: datasetProfile(source, columns),
+    sheetName: source.sheetName ?? undefined,
+    uploadedAt: Number.isNaN(uploaded.getTime())
+      ? source.createdAt
+      : uploaded.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }),
+    createdAt: source.createdAt,
+    status: source.rowCount && source.columnCount ? "Selesai" : "Belum diproses",
   };
 }
 
-function mapVisualization(record: VisualizationRecord, datasets: Dataset[]): Visualization {
-  const config = record.configuration;
-  const dataset = datasets.find((item) => item.id === record.datasetId);
+function mapChartType(value: string): Visualization["chartType"] {
+  const normalized = value.toLowerCase();
+  if (normalized === "line" || normalized === "area" || normalized === "pie" || normalized === "donut" || normalized === "scatter") {
+    return normalized[0].toUpperCase() + normalized.slice(1) as Visualization["chartType"];
+  }
+  return "Bar";
+}
+
+function toVisualization(source: BackendVisualization, datasets: Dataset[]): Visualization {
+  const dataset = datasets.find((item) => item.id === source.datasetId);
+  const configuration = source.configuration;
+  const xKey = dataset?.columns?.find((column) => column.name === configuration.xAxis)?.key ?? configuration.xAxis;
+  const yKey = configuration.aggregation === "count" && configuration.chartType !== "scatter"
+    ? ""
+    : dataset?.columns?.find((column) => column.name === configuration.yAxis)?.key ?? configuration.yAxis;
+  const created = new Date(source.createdAt);
+  const dateFilter = configuration.filters?.find((filter) => filter.operator === "gte");
+  const periodDays = dateFilter && typeof dateFilter.value === "string"
+    ? (Date.now() - Date.parse(dateFilter.value)) / (24 * 60 * 60 * 1000)
+    : Number.NaN;
+  const period: ChartPeriod = periodDays >= 5 && periodDays <= 10
+    ? "7 Hari"
+    : periodDays >= 25 && periodDays <= 35
+      ? "30 Hari"
+      : periodDays >= 330 && periodDays <= 400
+        ? "12 Bulan"
+        : "Semua Data";
   return {
-    id: record.id,
-    datasetId: record.datasetId,
-    title: record.name,
-    datasetName: datasets.find((dataset) => dataset.id === record.datasetId)?.name ?? "Dataset",
-    chartType: (record.chartType.charAt(0).toUpperCase() + record.chartType.slice(1)) as ChartType,
-    xKey: dataset?.columns?.find((column) => column.name === config.xAxis)?.key ?? config.xAxis,
-    yKey: dataset?.columns?.find((column) => column.name === config.yAxis)?.key ?? config.yAxis,
-    aggregation: (config.aggregation ?? "sum") as Visualization["aggregation"],
-    period: (config.period ?? "Semua Data") as Visualization["period"],
-    createdAt: new Date(record.createdAt).toLocaleString("id-ID"),
+    id: source.id,
+    title: source.name,
+    datasetId: source.datasetId,
+    datasetName: dataset?.name ?? "Dataset",
+    chartType: mapChartType(source.chartType ?? configuration.chartType),
+    xKey,
+    yKey,
+    aggregation: (configuration.aggregation ?? "average") as AggregationOperation,
+    createdAt: Number.isNaN(created.getTime()) ? source.createdAt : created.toLocaleString("id-ID"),
+    period,
+    filters: configuration.filters ?? [],
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [visualizations, setVisualizations] = useState<Visualization[]>([]);
-  const [reports, setReports] = useState<SavedReport[]>([]);
   const [settings, setSettings] = useState(defaultSettings);
   const [currentDatasetId, setCurrentDatasetId] = useState("");
-  const [rows, setRows] = useState<DataRow[]>([]);
-  const [previewDatasetId, setPreviewDatasetId] = useState("");
-  const [columnMetadata, setColumnMetadata] = useState<ColumnMetadata[]>([]);
-  const [token, setToken] = useState<string | null>(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState("");
-
-  useEffect(() => {
-    const initialize = () => {
-      try {
-        setToken(localStorage.getItem(tokenStorageKey) ?? sessionStorage.getItem(tokenStorageKey));
-        const storedSettings = localStorage.getItem(settingsStorageKey);
-        if (storedSettings) setSettings({ ...defaultSettings, ...JSON.parse(storedSettings) as Partial<Settings> });
-      } catch (error) {
-        console.error("Could not restore MatikSight preferences.", error);
-      } finally {
-        setAuthReady(true);
-      }
-    };
-    const timer = window.setTimeout(initialize, 0);
-    return () => window.clearTimeout(timer);
-  }, []);
+  const [toastClosing, setToastClosing] = useState(false);
+  const toastTimeout = useRef<number | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [dataLoading, setDataLoading] = useState(false);
 
   const notify = useCallback((message: string) => {
+    if (toastTimeout.current !== null) window.clearTimeout(toastTimeout.current);
     setToast(message);
-    window.setTimeout(() => setToast(""), 3200);
+    setToastClosing(false);
+    toastTimeout.current = window.setTimeout(() => {
+      setToastClosing(true);
+      const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+      toastTimeout.current = window.setTimeout(() => {
+        setToast("");
+        setToastClosing(false);
+        toastTimeout.current = null;
+      }, delay);
+    }, 3000);
+  }, []);
+  useEffect(() => () => {
+    if (toastTimeout.current !== null) window.clearTimeout(toastTimeout.current);
   }, []);
 
-  const clearSession = useCallback(() => {
-    localStorage.removeItem(tokenStorageKey);
-    sessionStorage.removeItem(tokenStorageKey);
-    setToken(null);
-    setDatasets([]);
-    setVisualizations([]);
-    setReports([]);
-    setRows([]);
-    setColumnMetadata([]);
-    setCurrentDatasetId("");
-    setSettings((current) => ({ ...current, name: "", email: "" }));
+  const loadDataset = useCallback(async (id: string, existing: Dataset[]) => {
+    const [detail, preview] = await Promise.all([
+      apiRequest<BackendDatasetDetailResponse>(`/datasets/${encodeURIComponent(id)}`),
+      apiRequest<BackendDatasetPreviewResponse>(`/datasets/${encodeURIComponent(id)}/preview?page=1&limit=100`),
+    ]);
+    const updated = toDataset(detail.data, preview.data);
+    setDatasets((previous) => {
+      const current = previous.length ? previous : existing;
+      return current.map((dataset) => dataset.id === id ? updated : dataset);
+    });
+    return updated;
   }, []);
 
-  const refreshWorkspace = useCallback(async (accessToken: string) => {
-    setLoading(true);
-    try {
-      const [profile, datasetResponse, visualizationResponse, reportResponse] = await Promise.all([
-        apiRequest<ApiProfile>("/users/me", { token: accessToken }),
-        apiRequest<ApiList<DatasetRecord>>("/datasets?limit=100", { token: accessToken }),
-        apiRequest<ApiList<VisualizationRecord>>("/visualizations?limit=100", { token: accessToken }),
-        apiRequest<ApiList<{ id: string; datasetId: string; name: string; description?: string | null; createdAt: string }>>("/reports?limit=100", { token: accessToken }),
-      ]);
-      const mappedDatasets = datasetResponse.data.map(mapDataset);
-      setDatasets(mappedDatasets);
-      setVisualizations(visualizationResponse.data.map((item) => mapVisualization(item, mappedDatasets)));
-      setReports(reportResponse.data.map((item) => ({
-        id: item.id,
-        datasetId: item.datasetId,
-        title: item.name,
-        description: item.description,
-        createdAt: new Date(item.createdAt).toLocaleString("id-ID"),
-      })));
-      setSettings((current) => ({ ...current, name: profile.data.user.fullName ?? "", email: profile.data.user.email }));
-      setCurrentDatasetId((current) => mappedDatasets.some((item) => item.id === current) ? current : mappedDatasets[0]?.id ?? "");
-    } catch (error) {
-      if (error instanceof Error && "status" in error && error.status === 401) {
-        clearSession();
-      } else {
-        notify(error instanceof Error ? error.message : "Gagal memuat data akun.");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [clearSession, notify]);
-
-  useEffect(() => {
-    if (!authReady || !token) return;
-    const timer = window.setTimeout(() => { void refreshWorkspace(token); }, 0);
-    return () => window.clearTimeout(timer);
-  }, [authReady, token, refreshWorkspace]);
-
-  const refreshDatasetPreview = useCallback(async (id: string) => {
-    if (!token || !id) {
-      setRows([]);
-      setColumnMetadata([]);
-      setPreviewDatasetId("");
-      return;
-    }
-    const result = await apiRequest<{ data: DataRow[]; dataset: { columns?: string[]; columnMetadata?: ColumnMetadata[] } }>(
-      `/datasets/${encodeURIComponent(id)}/preview?limit=100`,
-      { token },
-    );
-    const names = result.dataset.columns ?? [];
-    const metadata = result.dataset.columnMetadata ?? [];
-    const columns = mapColumns(names, metadata);
-    const previewRows = result.data.map((row) => columns.map((column) => row[column.name]));
-    setRows(result.data);
-    setColumnMetadata(metadata);
-    setDatasets((previous) => previous.map((item) => item.id === id ? {
-      ...item,
-      columns: columns.length ? columns : item.columns,
-      columnMetadata: metadata,
-      data: previewRows,
-      profile: item.profile ?? mapProfile(columns, metadata, item.rows),
-    } : item));
-    setPreviewDatasetId(id);
-  }, [token]);
-
-  useEffect(() => {
-    if (!token || !currentDatasetId) return;
-    const timer = window.setTimeout(() => {
-      void refreshDatasetPreview(currentDatasetId).catch((error: unknown) => {
-        notify(error instanceof Error ? error.message : "Gagal memuat pratinjau dataset.");
+  const selectDataset = useCallback((id: string) => {
+    setCurrentDatasetId(id);
+    const dataset = datasets.find((item) => item.id === id);
+    if (dataset && !dataset.data?.length && dataset.rows > 0) {
+      void loadDataset(id, datasets).catch((error: unknown) => {
+        notify(`Gagal memuat preview dataset: ${error instanceof Error ? error.message : "Kesalahan API."}`);
       });
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [token, currentDatasetId, refreshDatasetPreview, notify]);
+    }
+  }, [datasets, loadDataset, notify]);
 
-  const login = useCallback(async (identifier: string, password: string, remember = true) => {
-    const result = await apiRequest<AuthResponse>("/auth/login", { body: { identifier, password } });
-    const storage = remember ? localStorage : sessionStorage;
-    const otherStorage = remember ? sessionStorage : localStorage;
-    storage.setItem(tokenStorageKey, result.data.accessToken);
-    otherStorage.removeItem(tokenStorageKey);
-    setSettings((current) => ({ ...current, name: result.data.user.fullName ?? "", email: result.data.user.email }));
-    setToken(result.data.accessToken);
+  const loadWorkspace = useCallback(async () => {
+    setDataLoading(true);
+    try {
+      const [backendDatasets, backendVisualizations] = await Promise.all([
+        fetchAllPages<BackendDataset>("/datasets"),
+        fetchAllPages<BackendVisualization>("/visualizations"),
+      ]);
+      const nextDatasets = backendDatasets.map((dataset) => toDataset(dataset));
+      setDatasets(nextDatasets);
+      setVisualizations(backendVisualizations.map((item) => toVisualization(item, nextDatasets)));
+      const savedId = localStorage.getItem(currentDatasetKey);
+      const selectedId = savedId && nextDatasets.some((item) => item.id === savedId)
+        ? savedId
+        : nextDatasets[0]?.id ?? "";
+      setCurrentDatasetId(selectedId);
+      if (selectedId) await loadDataset(selectedId, nextDatasets);
+    } finally {
+      setDataLoading(false);
+    }
+  }, [loadDataset]);
+
+  const loadProfile = useCallback((currentUser: AuthUser) => {
+    setUser(currentUser);
+    setSettings((previous) => ({
+      ...previous,
+      name: currentUser.fullName ?? currentUser.username,
+      email: currentUser.email,
+    }));
   }, []);
 
-  const register = useCallback(async (input: { fullName: string; username: string; email: string; password: string }) => {
-    await apiRequest("/auth/register", { body: input });
-    await login(input.email, input.password);
-  }, [login]);
-
-  const logout = useCallback(async () => {
+  useEffect(() => {
     try {
-      if (token) await apiRequest("/auth/logout", { token });
-    } finally {
-      clearSession();
+      const saved = localStorage.getItem(preferencesKey);
+      const legacy = saved ? null : localStorage.getItem(legacyStorageKey);
+      const legacyWorkspace = legacy ? JSON.parse(legacy) as unknown : null;
+      const parsed = saved
+        ? JSON.parse(saved) as Partial<Settings>
+        : isRecord(legacyWorkspace) && isRecord(legacyWorkspace.settings)
+          ? legacyWorkspace.settings as Partial<Settings>
+          : null;
+      if (parsed) {
+        const restored = { ...defaultSettings, ...parsed };
+        if (!["Terang", "Gelap", "Sistem"].includes(restored.theme)) restored.theme = defaultSettings.theme;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Restore saved UI preferences after hydration.
+        setSettings((previous) => ({ ...previous, ...restored }));
+      }
+      const savedDatasetId = localStorage.getItem(currentDatasetKey);
+      if (savedDatasetId) setCurrentDatasetId(savedDatasetId);
+    } catch (error) {
+      console.error("Could not restore MatikSight UI preferences.", error);
     }
-  }, [clearSession, token]);
+  }, []);
 
-  const addDataset = useCallback(async (file: File) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    const form = new FormData();
-    form.append("file", file);
-    const result = await apiRequest<{ dataset: DatasetRecord }>("/datasets", { token, body: form });
-    const dataset = mapDataset(result.dataset);
-    setDatasets((previous) => [dataset, ...previous.filter((item) => item.id !== dataset.id)]);
-    setCurrentDatasetId(dataset.id);
-  }, [token]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(preferencesKey, JSON.stringify({
+        theme: settings.theme,
+        defaultChart: settings.defaultChart,
+        pageSize: settings.pageSize,
+      }));
+      if (currentDatasetId) localStorage.setItem(currentDatasetKey, currentDatasetId);
+      else localStorage.removeItem(currentDatasetKey);
+    } catch (error) {
+      console.error("Could not save MatikSight UI preferences.", error);
+    }
+  }, [settings.theme, settings.defaultChart, settings.pageSize, currentDatasetId]);
+
+  useEffect(() => {
+    applyTheme(settings.theme);
+    if (settings.theme !== "Sistem") return;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => applyTheme("Sistem");
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [settings.theme]);
+
+  useEffect(() => {
+    let active = true;
+    const handleUnauthorized = () => {
+      if (!active) return;
+      setUser(null);
+      setDatasets([]);
+      setVisualizations([]);
+      setCurrentDatasetId("");
+      setAuthError("");
+      setAuthReady(true);
+    };
+    window.addEventListener("matiksight:unauthorized", handleUnauthorized);
+    const restoreSession = async () => {
+      if (!hasAccessToken()) {
+        setAuthReady(true);
+        return;
+      }
+      try {
+        const response = await apiRequest<AuthResponse>("/auth/me");
+        if (!active) return;
+        loadProfile(response.data.user);
+        setAuthError("");
+        await loadWorkspace();
+      } catch (error) {
+        if (!active) return;
+        const message = error instanceof Error ? error.message : "Sesi tidak dapat dipulihkan.";
+        if (!(error instanceof Error && "status" in error && error.status === 401)) setAuthError(message);
+        else setUser(null);
+      } finally {
+        if (active) setAuthReady(true);
+      }
+    };
+    void restoreSession();
+    return () => {
+      active = false;
+      window.removeEventListener("matiksight:unauthorized", handleUnauthorized);
+    };
+  }, [loadProfile, loadWorkspace]);
+
+  const uploadDataset = useCallback(async (file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await apiRequest<BackendUploadResponse>("/datasets", { method: "POST", body });
+    const columns = response.columns ?? response.dataset.columns ?? [];
+    const uploaded = toDataset({
+      ...response.dataset,
+      originalFilename: response.dataset.originalFilename || file.name,
+      fileSize: response.dataset.fileSize || file.size,
+      columns,
+      columnMetadata: response.columnMetadata,
+      profiling: response.profiling,
+    }, response.preview ?? []);
+    setDatasets((previous) => [uploaded, ...previous.filter((dataset) => dataset.id !== uploaded.id)]);
+    setCurrentDatasetId(uploaded.id);
+    return uploaded;
+  }, []);
 
   const removeDataset = useCallback(async (id: string) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    await apiRequest(`/datasets/${encodeURIComponent(id)}`, { token, method: "DELETE" });
-    setDatasets((previous) => previous.filter((item) => item.id !== id));
-    setVisualizations((previous) => previous.filter((item) => item.datasetId !== id));
-    setReports((previous) => previous.filter((item) => item.datasetId !== id));
-    if (currentDatasetId === id) setCurrentDatasetId(datasets.find((item) => item.id !== id)?.id ?? "");
-  }, [currentDatasetId, datasets, token]);
-
-  const renameDataset = useCallback(async (id: string, name: string) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    const result = await apiRequest<{ data: DatasetRecord }>(`/datasets/${encodeURIComponent(id)}`, {
-      token,
-      method: "PATCH",
-      body: { name },
-    });
-    setDatasets((previous) => previous.map((item) => item.id === id ? { ...item, name: result.data.name } : item));
-  }, [token]);
+    await apiRequest<{ success: true; message: string }>(`/datasets/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const remaining = datasets.filter((dataset) => dataset.id !== id);
+    setDatasets(remaining);
+    if (currentDatasetId === id) {
+      const next = remaining[0];
+      setCurrentDatasetId(next?.id ?? "");
+      if (next && next.rows > 0) await loadDataset(next.id, remaining);
+    }
+  }, [datasets, currentDatasetId, loadDataset]);
 
   const saveVisualization = useCallback(async (visualization: Omit<Visualization, "id" | "createdAt">) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    const result = await apiRequest<{ data: VisualizationRecord }>("/visualizations", {
-      token,
+    const dataset = datasets.find((item) => item.id === visualization.datasetId);
+    const xColumn = dataset?.columns?.find((column) => column.key === visualization.xKey);
+    const yColumn = dataset?.columns?.find((column) => column.key === visualization.yKey);
+    const apiYAxis = yColumn?.name ?? dataset?.columns?.find((column) => column.key !== xColumn?.key)?.name;
+    if (!dataset || !xColumn || (visualization.aggregation !== "count" && !yColumn)) {
+      throw new Error("Dataset dan kolom visualisasi tidak tersedia.");
+    }
+    if (!apiYAxis) {
+      throw new Error("Visualisasi hitung memerlukan minimal dua kolom untuk disimpan.");
+    }
+    const response = await apiRequest<BackendVisualizationResponse>("/visualizations", {
+      method: "POST",
       body: {
         datasetId: visualization.datasetId,
         name: visualization.title,
         configuration: {
           chartType: visualization.chartType.toLowerCase(),
-          xAxis: datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.xKey)?.name ?? visualization.xKey,
-          yAxis: datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.yKey)?.name ?? visualization.yKey,
-          groupBy: visualization.chartType === "Scatter" ? [] : [
-            datasets.find((dataset) => dataset.id === visualization.datasetId)?.columns?.find((column) => column.key === visualization.xKey)?.name ?? visualization.xKey,
-          ],
+          xAxis: xColumn.name,
+          yAxis: apiYAxis,
+          groupBy: [],
           aggregation: visualization.aggregation,
+          filters: visualization.filters ?? [],
+          sort: { column: "value", direction: "desc" },
           limit: 100,
         },
       },
     });
-    setVisualizations((previous) => [mapVisualization(result.data, datasets), ...previous]);
-  }, [datasets, token]);
+    setVisualizations((previous) => [toVisualization(response.data, datasets), ...previous]);
+  }, [datasets]);
 
   const updateVisualization = useCallback(async (id: string, updates: Partial<Visualization>) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    await apiRequest(`/visualizations/${encodeURIComponent(id)}`, {
-      token,
+    const response = await apiRequest<BackendVisualizationResponse>(`/visualizations/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: { ...(updates.title !== undefined ? { name: updates.title } : {}) },
     });
-    setVisualizations((previous) => previous.map((item) => item.id === id ? { ...item, ...updates } : item));
-  }, [token]);
+    setVisualizations((previous) => previous.map((item) => item.id === id
+      ? toVisualization(response.data, datasets)
+      : item));
+  }, [datasets]);
 
   const removeVisualization = useCallback(async (id: string) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    await apiRequest(`/visualizations/${encodeURIComponent(id)}`, { token, method: "DELETE" });
+    await apiRequest<{ success: true; message: string }>(`/visualizations/${encodeURIComponent(id)}`, { method: "DELETE" });
     setVisualizations((previous) => previous.filter((item) => item.id !== id));
-  }, [token]);
+  }, []);
 
-  const saveReport = useCallback(async (datasetId: string, title: string, configuration: Record<string, unknown>, snapshot: Record<string, unknown>) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    const result = await apiRequest<{ data: { id: string; datasetId: string; name: string; description?: string | null; createdAt: string } }>("/reports", {
-      token,
-      body: { datasetId, name: title, configuration, snapshot },
-    });
-    setReports((previous) => [{
-      id: result.data.id,
-      datasetId: result.data.datasetId,
-      title: result.data.name,
-      description: result.data.description,
-      createdAt: new Date(result.data.createdAt).toLocaleString("id-ID"),
-    }, ...previous]);
-  }, [token]);
+  const updateSettings = useCallback((updates: Partial<Settings>) => {
+    if (updates.theme) applyTheme(updates.theme);
+    setSettings((previous) => ({ ...previous, ...updates }));
+  }, []);
 
-  const removeReport = useCallback(async (id: string) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    await apiRequest(`/reports/${encodeURIComponent(id)}`, { token, method: "DELETE" });
-    setReports((previous) => previous.filter((item) => item.id !== id));
-  }, [token]);
-
-  const updateSettings = useCallback(async (updates: Partial<Settings>) => {
-    const next = { ...settings, ...updates };
-    if (token && (updates.name !== undefined || updates.email !== undefined)) {
-      const result = await apiRequest<ApiProfile>("/users/me", {
-        token,
-        method: "PATCH",
-        body: { fullName: next.name, email: next.email },
-      });
-      next.name = result.data.user.fullName ?? "";
-      next.email = result.data.user.email;
-    }
-    setSettings(next);
-    localStorage.setItem(settingsStorageKey, JSON.stringify({
-      theme: next.theme,
-      defaultChart: next.defaultChart,
-      pageSize: next.pageSize,
-    }));
-  }, [settings, token]);
-
-  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
-    if (!token) throw new Error("Silakan masuk kembali.");
-    await apiRequest("/users/me/password", {
-      token,
+  const updateProfile = useCallback(async (profile: ProfileUpdate) => {
+    const response = await apiRequest<AuthResponse>("/users/me", {
       method: "PATCH",
-      body: { currentPassword, newPassword },
+      body: { fullName: profile.name, email: profile.email },
     });
-  }, [token]);
+    loadProfile(response.data.user);
+  }, [loadProfile]);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    const currentUser = await signIn(credentials);
+    loadProfile(currentUser);
+    setAuthError("");
+    setAuthReady(true);
+    try {
+      await loadWorkspace();
+    } catch (error) {
+      notify(`Berhasil masuk, tetapi workspace gagal dimuat: ${error instanceof Error ? error.message : "Kesalahan API."}`);
+    }
+  }, [loadProfile, loadWorkspace, notify]);
+
+  const register = useCallback(async (details: RegistrationDetails) => {
+    const currentUser = await registerAccount(details);
+    loadProfile(currentUser);
+    setAuthError("");
+    setAuthReady(true);
+    try {
+      await loadWorkspace();
+    } catch (error) {
+      notify(`Akun berhasil dibuat, tetapi workspace gagal dimuat: ${error instanceof Error ? error.message : "Kesalahan API."}`);
+    }
+  }, [loadProfile, loadWorkspace, notify]);
+
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest<{ success: true; message: string }>("/auth/logout", { method: "POST" });
+    } finally {
+      clearAccessToken();
+      setUser(null);
+      setDatasets([]);
+      setVisualizations([]);
+      setCurrentDatasetId("");
+    }
+  }, []);
 
   const currentDataset = datasets.find((dataset) => dataset.id === currentDatasetId) ?? datasets[0] ?? null;
   const value = useMemo(() => ({
-    datasets, visualizations, reports, settings, toast, token, authReady, loading,     rows: previewDatasetId === currentDatasetId ? rows : [], columnMetadata,
-    addDataset, removeDataset, renameDataset, saveVisualization, updateVisualization, removeVisualization, saveReport,
-    removeReport, updateSettings, changePassword, login, register, logout, notify, currentDataset,
-    setCurrentDatasetId, refreshDatasetPreview,
+    datasets, visualizations, settings, toast, toastClosing, user, authReady, authError, dataLoading,
+    uploadDataset, removeDataset, saveVisualization, updateVisualization, removeVisualization,
+    updateSettings, updateProfile, login, register, logout, notify, currentDataset,
+    setCurrentDatasetId: selectDataset, rows: currentDataset?.data ?? [],
   }), [
-    datasets, visualizations, reports, settings, toast, token, authReady, loading, rows, previewDatasetId, currentDatasetId, columnMetadata,
-    addDataset, removeDataset, renameDataset, saveVisualization, updateVisualization, removeVisualization, saveReport,
-    removeReport, updateSettings, changePassword, login, register, logout, notify, currentDataset, refreshDatasetPreview,
+    datasets, visualizations, settings, toast, toastClosing, user, authReady, authError, dataLoading,
+    uploadDataset, removeDataset, saveVisualization, updateVisualization, removeVisualization,
+    updateSettings, updateProfile, login, register, logout, notify, currentDataset, selectDataset,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

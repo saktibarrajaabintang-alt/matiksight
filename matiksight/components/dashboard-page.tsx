@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer,
@@ -26,11 +26,6 @@ export function DashboardPage() {
   const { datasets, visualizations, settings } = useApp();
   const [range, setRange] = useState<DateRange>("7 Hari Terakhir");
   const [chartMetric, setChartMetric] = useState<"Jumlah Dataset" | "Ukuran File">("Jumlah Dataset");
-  const [today, setToday] = useState<Date | null>(null);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setToday(new Date()), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
   const totalKilobytes = datasets.reduce((total, dataset) => total + dataset.size, 0);
   const distribution = [
     { name: "Bar Chart", value: visualizations.filter((item) => item.chartType === "Bar").length },
@@ -39,8 +34,8 @@ export function DashboardPage() {
     { name: "Lainnya", value: visualizations.filter((item) => item.chartType === "Area" || item.chartType === "Scatter").length },
   ].filter((item) => item.value > 0);
   const trendData = useMemo(() => {
-    if (!today) return [];
     const days = rangeDays[range];
+    const today = new Date();
     return Array.from({ length: days }, (_, index) => {
       const date = new Date(today);
       date.setHours(0, 0, 0, 0);
@@ -60,7 +55,7 @@ export function DashboardPage() {
           : matched.reduce((sum, dataset) => sum + dataset.size, 0),
       };
     });
-  }, [datasets, range, chartMetric, today]);
+  }, [datasets, range, chartMetric]);
   const stats = [
     { label: "Total Dataset", value: formatNumber(datasets.length), icon: Database, color: "blue", hint: "file di workspace" },
     { label: "Visualisasi", value: formatNumber(visualizations.length), icon: BarChart3, color: "violet", hint: "tersimpan" },

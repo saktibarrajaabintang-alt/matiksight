@@ -10,18 +10,6 @@ export type DatasetColumnType =
   | "boolean";
 
 export type DatasetRecord = unknown[];
-export type DataRow = Record<string, unknown>;
-
-export type ColumnMetadata = {
-  name: string;
-  type: string;
-  nullable: boolean;
-  uniqueCount: number;
-  nullCount: number;
-  min?: number | string;
-  max?: number | string;
-  mean?: number;
-};
 
 export type DatasetColumn = {
   key: string;
@@ -70,7 +58,6 @@ export type Dataset = {
   data?: DatasetRecord[];
   columns?: DatasetColumn[];
   profile?: DatasetProfile;
-  columnMetadata?: ColumnMetadata[];
   sheetName?: string;
   uploadedAt: string;
   createdAt?: string;
@@ -95,14 +82,7 @@ export type Visualization = ChartConfiguration & {
   id: string;
   datasetName: string;
   createdAt: string;
-};
-
-export type SavedReport = {
-  id: string;
-  datasetId: string;
-  title: string;
-  description?: string | null;
-  createdAt: string;
+  filters?: { column: string; operator: string; value?: unknown }[];
 };
 
 export type ChartRecommendation = ChartConfiguration & {

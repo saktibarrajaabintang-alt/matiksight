@@ -8,15 +8,16 @@ datasource db {
 }
 
 model User {
-  id              String         @id @default(uuid()) @db.Uuid
-  fullName        String?        @map("full_name") @db.VarChar(120)
-  username        String         @unique @db.VarChar(30)
-  email           String         @unique @db.VarChar(254)
-  passwordHash    String         @map("password_hash") @db.VarChar(255)
-  profilePhotoUrl String?        @map("profile_photo_url") @db.VarChar(2048)
-  accountStatus   String         @default("active") @map("account_status") @db.VarChar(20)
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  id              String               @id @default(uuid()) @db.Uuid
+  fullName        String?              @map("full_name") @db.VarChar(120)
+  username        String               @unique @db.VarChar(30)
+  email           String               @unique @db.VarChar(254)
+  googleSubject   String?              @unique @map("google_subject") @db.VarChar(255)
+  passwordHash    String               @map("password_hash") @db.VarChar(255)
+  profilePhotoUrl String?              @map("profile_photo_url") @db.VarChar(2048)
+  accountStatus   String               @default("active") @map("account_status") @db.VarChar(20)
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
   datasets        Dataset[]
   uploads         UploadedFile[]
   visualizations  SavedVisualization[]
@@ -26,23 +27,23 @@ model User {
 }
 
 model Dataset {
-  id               String        @id @default(uuid()) @db.Uuid
-  userId           String        @map("user_id") @db.Uuid
-  name             String        @db.VarChar(255)
-  originalFilename String        @map("original_filename") @db.VarChar(255)
-  storageKey       String?       @unique @map("storage_key") @db.VarChar(80)
-  fileType         String        @map("file_type") @db.VarChar(10)
-  mimeType         String?       @map("mime_type") @db.VarChar(127)
-  fileSize         Int           @map("file_size")
-  processingStatus String        @default("processed") @map("processing_status") @db.VarChar(20)
-  rowCount         Int           @map("row_count")
-  columnCount      Int           @map("column_count")
+  id               String               @id @default(uuid()) @db.Uuid
+  userId           String               @map("user_id") @db.Uuid
+  name             String               @db.VarChar(255)
+  originalFilename String               @map("original_filename") @db.VarChar(255)
+  storageKey       String?              @unique @map("storage_key") @db.VarChar(80)
+  fileType         String               @map("file_type") @db.VarChar(10)
+  mimeType         String?              @map("mime_type") @db.VarChar(127)
+  fileSize         Int                  @map("file_size")
+  processingStatus String               @default("processed") @map("processing_status") @db.VarChar(20)
+  rowCount         Int                  @map("row_count")
+  columnCount      Int                  @map("column_count")
   columns          Json
-  columnMetadata   Json          @map("column_metadata")
+  columnMetadata   Json                 @map("column_metadata")
   profiling        Json
-  createdAt        DateTime      @default(now()) @map("created_at")
-  updatedAt        DateTime      @updatedAt @map("updated_at")
-  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   rows             DatasetRow[]
   visualizations   SavedVisualization[]
   reports          SavedReport[]
@@ -103,9 +104,9 @@ model SavedReport {
 }
 
 model DatasetRow {
-  id        BigInt   @id @default(autoincrement())
-  datasetId String   @map("dataset_id") @db.Uuid
-  rowIndex  Int      @map("row_index")
+  id        BigInt  @id @default(autoincrement())
+  datasetId String  @map("dataset_id") @db.Uuid
+  rowIndex  Int     @map("row_index")
   values    Json
   dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
 

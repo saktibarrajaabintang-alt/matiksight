@@ -33,4 +33,11 @@ describe('AuthRateLimitGuard', () => {
     jest.advanceTimersByTime(15 * 60 * 1000);
     expect(guard.canActivate(context)).toBe(true);
   });
+
+  it('limits Google login attempts independently', () => {
+    const guard = new AuthRateLimitGuard();
+    const { context } = contextFor('/auth/google/link');
+    for (let attempt = 0; attempt < 10; attempt += 1) expect(guard.canActivate(context)).toBe(true);
+    expect(() => guard.canActivate(context)).toThrow(HttpException);
+  });
 });

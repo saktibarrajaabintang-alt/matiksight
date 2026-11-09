@@ -11,6 +11,9 @@ Times are ISO-8601 values returned by PostgreSQL/Prisma.
 | --- | --- | --- | --- |
 | POST | `/auth/register` | Public; 5/IP/15 min | `{ "username": "analyst01", "email": "analyst@example.com", "password": "secure-pass-123", "fullName": "Analyst One" }` (`fullName` optional for compatibility) |
 | POST | `/auth/login` | Public; 10/IP/15 min | `{ "identifier": "analyst01", "password": "secure-pass-123" }` |
+| POST | `/auth/google` | Public; 10/IP/15 min | `{ "idToken": "<Google ID token>" }`; verifies the token audience against `GOOGLE_CLIENT_ID` |
+| POST | `/auth/google/link` | Bearer; 10/IP/15 min | `{ "idToken": "<Google ID token>" }`; links a verified Google email matching the current account |
+| POST | `/auth/google/link` | Bearer; 10/IP/15 min | `{ "idToken": "<Google ID token>" }`; links a verified Google email matching the current account |
 | POST | `/auth/logout` | Bearer | No body. Client must discard its token; JWT is stateless and expires after one hour. |
 | GET | `/auth/me` | Bearer | Current public profile. |
 | GET | `/users/me` | Bearer | Current public profile. |
@@ -20,6 +23,17 @@ Times are ISO-8601 values returned by PostgreSQL/Prisma.
 Registration requires a 3–30 character alphanumeric/underscore username, valid
 email, and 8–72 UTF-8-byte password. Duplicate username/email returns 409.
 Profile responses omit password hashes. An inactive account cannot log in.
+Google login accepts only a valid Google OpenID Connect ID token with a
+verified email for the configured web client. Its response has the same
+`data.accessToken`, `tokenType`, `expiresIn`, and public `user` fields as
+`POST /auth/login`. New Google accounts receive a random, unusable local
+password. If a Google email already belongs to a local account, login returns
+409 rather than linking by email; authenticate locally and call
+`POST /auth/google/link` with the MatikSight bearer token and Google ID token.
+Linking requires the verified Google email to match the current profile email,
+and each Google subject can be linked to only one account. Configure
+`GOOGLE_CLIENT_ID` with the OAuth 2.0 web client ID; it is an audience
+identifier, not a client secret.
 
 ## Datasets
 
