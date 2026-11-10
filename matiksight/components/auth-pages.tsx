@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   ArrowRight, BarChart3, Eye, EyeOff, LockKeyhole, Mail, Moon, ShieldCheck,
   Sun, UserRound, Zap,
 } from "lucide-react";
 import { useApp } from "@/components/app-provider";
+import { GoogleIdTokenButton } from "@/components/google-id-token-button";
 import { ApiError } from "@/lib/api-client";
-import { AuthenticationUnavailableError, signInWithGoogle } from "@/lib/auth-service";
 
 type AuthMode = "login" | "register";
 type FieldErrors = Record<string, string>;
@@ -127,10 +127,6 @@ function AuthInput({
   );
 }
 
-function GoogleMark() {
-  return <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5h6.6c3.9-3.6 6.1-8.8 6.1-14.9Z" /><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.9l-6.6-5c-1.8 1.2-4.1 2-6.9 2-5.3 0-9.8-3.6-11.4-8.4H5.8v5.1A20 20 0 0 0 24 44Z" /><path fill="#FBBC05" d="M12.6 27.7a12 12 0 0 1 0-7.4v-5.1H5.8a20 20 0 0 0 0 17.6l6.8-5.1Z" /><path fill="#EA4335" d="M24 11.9c3 0 5.7 1 7.8 3.1l5.8-5.8C34.1 5.8 29.5 4 24 4A20 20 0 0 0 5.8 15.2l6.8 5.1c1.6-4.8 6.1-8.4 11.4-8.4Z" /></svg>;
-}
-
 function AuthCard({ children, mode }: { children: ReactNode; mode: AuthMode }) {
   return (
     <section className={`auth-card ${mode === "register" ? "register-card" : "login-card"}`}>
@@ -154,10 +150,16 @@ function AuthShell({ children }: { children: ReactNode }) {
   </main>;
 }
 
-function getServiceError(error: unknown) {
-  if (error instanceof AuthenticationUnavailableError) return error.message;
-  console.error("MatikSight authentication request failed.", error);
-  if (error instanceof ApiError) return error.message;
+function getServiceError(error: unknown, googleLogin = false) {
+  if (error instanceof ApiError) {
+    if (googleLogin && error.status === 409) {
+      return "Email Google ini sudah digunakan oleh akun lokal. Masuk dengan akun lokal terlebih dahulu, lalu tautkan Google dari Pengaturan.";
+    }
+    if (googleLogin && error.status === 503) {
+      return "Login Google sedang tidak tersedia. Periksa konfigurasi dan coba lagi nanti.";
+    }
+    return error.message;
+  }
   if (error instanceof Error && error.message === "Failed to fetch") {
     return "Tidak dapat menghubungi server MatikSight. Periksa koneksi dan alamat API.";
   }
@@ -167,11 +169,12 @@ function getServiceError(error: unknown) {
 
 export function LoginPage() {
   const router = useRouter();
-  const { login } = useApp();
+  const { login, loginWithGoogle } = useApp();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [remember, setRemember] = useState(false);
+  const googleLoginInFlight = useRef(false);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -197,12 +200,19 @@ export function LoginPage() {
     }
   };
 
-  const google = async () => {
+  const googleSuccess = async (credential: string) => {
+    if (googleLoginInFlight.current) return;
+    googleLoginInFlight.current = true;
+    setLoading(true);
     setMessage("");
     try {
-      await signInWithGoogle();
+      await loginWithGoogle(credential, remember);
+      router.replace("/dashboard");
     } catch (error) {
-      setMessage(getServiceError(error));
+      setMessage(getServiceError(error, true));
+    } finally {
+      googleLoginInFlight.current = false;
+      setLoading(false);
     }
   };
 
@@ -218,7 +228,15 @@ export function LoginPage() {
           <button className="auth-submit" type="submit" disabled={loading}>{loading ? <span className="auth-spinner" /> : <><span className="auth-submit-arrow"><ArrowRight size={16} /></span>Masuk</>}</button>
         </form>
         <div className="auth-divider"><span />atau<span /></div>
-        <button className="auth-google" type="button" onClick={google}><GoogleMark />Masuk dengan Google</button>
+        <GoogleIdTokenButton
+          label="Masuk dengan Google"
+          text="signin_with"
+          className="auth-google"
+          containerClassName="auth-google-control"
+          width={360}
+          onCredential={(idToken) => void googleSuccess(idToken)}
+          onError={setMessage}
+        />
         <p className="auth-switch">Belum punya akun? <Link href="/register">Daftar sekarang</Link></p>
       </AuthCard>
     </AuthShell>
@@ -227,11 +245,12 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const router = useRouter();
-  const { register } = useApp();
+  const { register, loginWithGoogle } = useApp();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const googleLoginInFlight = useRef(false);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -263,12 +282,19 @@ export function RegisterPage() {
     }
   };
 
-  const google = async () => {
+  const googleSuccess = async (idToken: string) => {
+    if (googleLoginInFlight.current) return;
+    googleLoginInFlight.current = true;
     setMessage("");
+    setLoading(true);
     try {
-      await signInWithGoogle();
+      await loginWithGoogle(idToken, false);
+      router.replace("/dashboard");
     } catch (error) {
-      setMessage(getServiceError(error));
+      setMessage(getServiceError(error, true));
+    } finally {
+      googleLoginInFlight.current = false;
+      setLoading(false);
     }
   };
 
@@ -287,7 +313,15 @@ export function RegisterPage() {
           <button className="auth-submit" type="submit" disabled={loading}>{loading ? <span className="auth-spinner" /> : <>Daftar Sekarang<ArrowRight size={17} /></>}</button>
         </form>
         <div className="auth-divider"><span />atau<span /></div>
-        <button className="auth-google" type="button" onClick={google}><GoogleMark />Daftar dengan Google</button>
+        <GoogleIdTokenButton
+          label="Daftar dengan Google"
+          text="signup_with"
+          className="auth-google"
+          containerClassName="auth-google-control"
+          width={360}
+          onCredential={(idToken) => void googleSuccess(idToken)}
+          onError={setMessage}
+        />
         <p className="auth-switch">Sudah punya akun? <Link href="/login">Masuk sekarang</Link></p>
       </AuthCard>
     </AuthShell>

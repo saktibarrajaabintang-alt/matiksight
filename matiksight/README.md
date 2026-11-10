@@ -20,9 +20,20 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 ## Backend integration
 
-The frontend uses the NestJS API from the `backend` branch. Set `NEXT_PUBLIC_API_BASE_URL` to the backend origin (default `http://localhost:3000`) in `matiksight/.env.local`; do not put credentials in this public variable. The backend must allow the frontend origin in `CORS_ORIGINS`. The frontend development server runs on port `3001` to match the backend branch's example CORS origin.
+The frontend uses the NestJS API from the `backend` branch. Set `NEXT_PUBLIC_API_BASE_URL` to the backend origin (default `http://localhost:3000`) in `matiksight/.env.local`; do not put credentials in this public variable. Configure `NEXT_PUBLIC_GOOGLE_CLIENT_ID` with the Google OAuth web client ID whose authorized JavaScript origin includes the frontend origin (for local development, `http://localhost:3001`). This client ID is public and is used by Google Identity Services to obtain an ID token for the backend's `POST /auth/google` endpoint. The backend must allow the frontend origin in `CORS_ORIGINS`. The frontend development server runs on port `3001` to match the backend branch's example CORS origin.
 
 Authentication uses the backend's one-hour bearer JWT. The access token is kept in session storage unless “Ingat saya” is selected, in which case it is kept in local storage. Dataset records, previews, profile data, visualizations, and deletions are fetched from the API; only UI preferences and the selected dataset ID are stored locally. Existing workspace data in older local-storage keys is left untouched and is not treated as server data.
+
+The Google button uses Google Identity Services to obtain an ID token and sends
+it in the JSON body only to `POST /auth/google`. The frontend stores the
+MatikSight `accessToken` returned by that endpoint using the same session/local
+storage choice as password login; it never stores the Google ID token. If the
+Google email belongs to an unlinked local account, the API returns HTTP 409 and
+the user must sign in locally first. The authenticated user can then use
+**Tautkan akun Google** in Pengaturan, which sends the Google ID token in the
+body of `POST /auth/google/link` and the MatikSight JWT as a bearer header.
+Linking is explicit and requires the verified Google email to match the current
+profile email; identities are not merged by email.
 
 CSV, XLSX, and XLS uploads are sent to `POST /datasets` and processed by the backend. Excel files use the first worksheet. The image option remains visible, but photo-to-dataset upload is unavailable because the dataset endpoint accepts only CSV/XLSX/XLS and OCR is not implemented. Dataset lists, paginated previews, deletions, chart data, aggregation, and saved visualizations use their corresponding backend endpoints. The reports screen lists saved visualizations; the separate saved-report API does not currently have a matching create/edit workflow in this UI.
 
@@ -47,7 +58,7 @@ In another terminal, from the frontend worktree:
 ```bash
 cd matiksight
 cp api.env.example .env.local
-# Set NEXT_PUBLIC_API_BASE_URL=http://localhost:3000 in .env.local if the API uses another origin.
+# Set NEXT_PUBLIC_GOOGLE_CLIENT_ID to the public OAuth web client ID and, if needed, NEXT_PUBLIC_API_BASE_URL in .env.local.
 npm install
 npm run dev
 ```

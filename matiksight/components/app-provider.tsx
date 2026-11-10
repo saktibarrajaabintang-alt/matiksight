@@ -11,7 +11,7 @@ import {
   DatasetRecord,
   Visualization,
 } from "@/lib/data-utils";
-import { LoginCredentials, RegistrationDetails, registerAccount, signIn } from "@/lib/auth-service";
+import { LoginCredentials, RegistrationDetails, linkGoogleAccount, registerAccount, signIn, signInWithGoogle } from "@/lib/auth-service";
 import {
   apiRequest,
   AuthUser,
@@ -49,6 +49,8 @@ type AppContextValue = {
   updateSettings: (settings: Partial<Settings>) => void;
   updateProfile: (profile: ProfileUpdate) => Promise<void>;
   login: (credentials: LoginCredentials) => Promise<void>;
+  loginWithGoogle: (idToken: string, remember: boolean) => Promise<void>;
+  linkGoogle: (idToken: string) => Promise<void>;
   register: (details: RegistrationDetails) => Promise<void>;
   logout: () => Promise<void>;
   notify: (message: string) => void;
@@ -492,8 +494,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     loadProfile(response.data.user);
   }, [loadProfile]);
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    const currentUser = await signIn(credentials);
+  const completeLogin = useCallback(async (currentUser: AuthUser) => {
     loadProfile(currentUser);
     setAuthError("");
     setAuthReady(true);
@@ -503,6 +504,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       notify(`Berhasil masuk, tetapi workspace gagal dimuat: ${error instanceof Error ? error.message : "Kesalahan API."}`);
     }
   }, [loadProfile, loadWorkspace, notify]);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    await completeLogin(await signIn(credentials));
+  }, [completeLogin]);
+
+  const loginWithGoogle = useCallback(async (idToken: string, remember: boolean) => {
+    await completeLogin(await signInWithGoogle(idToken, remember));
+  }, [completeLogin]);
+
+  const linkGoogle = useCallback(async (idToken: string) => {
+    await linkGoogleAccount(idToken);
+  }, []);
 
   const register = useCallback(async (details: RegistrationDetails) => {
     const currentUser = await registerAccount(details);
@@ -532,12 +545,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(() => ({
     datasets, visualizations, settings, toast, toastClosing, user, authReady, authError, dataLoading,
     uploadDataset, removeDataset, saveVisualization, updateVisualization, removeVisualization,
-    updateSettings, updateProfile, login, register, logout, notify, currentDataset,
+    updateSettings, updateProfile, login, loginWithGoogle, linkGoogle, register, logout, notify, currentDataset,
     setCurrentDatasetId: selectDataset, rows: currentDataset?.data ?? [],
   }), [
     datasets, visualizations, settings, toast, toastClosing, user, authReady, authError, dataLoading,
     uploadDataset, removeDataset, saveVisualization, updateVisualization, removeVisualization,
-    updateSettings, updateProfile, login, register, logout, notify, currentDataset, selectDataset,
+    updateSettings, updateProfile, login, loginWithGoogle, linkGoogle, register, logout, notify, currentDataset, selectDataset,
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

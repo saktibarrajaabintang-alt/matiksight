@@ -13,18 +13,11 @@ export type RegistrationDetails = {
   password: string;
 };
 
-export class AuthenticationUnavailableError extends Error {
-  constructor() {
-    super("Layanan autentikasi belum tersedia. Hubungi administrator MatikSight untuk informasi lebih lanjut.");
-    this.name = "AuthenticationUnavailableError";
-  }
-}
-
 type AuthResponse = {
   success: true;
   data: {
     user: AuthUser;
-    accessToken?: string;
+    accessToken: string;
   };
 };
 
@@ -41,6 +34,26 @@ export async function signIn(credentials: LoginCredentials): Promise<AuthUser> {
   return response.data.user;
 }
 
+export async function signInWithGoogle(idToken: string, remember: boolean): Promise<AuthUser> {
+  const response = await apiRequest<AuthResponse>("/auth/google", {
+    method: "POST",
+    auth: false,
+    body: { idToken },
+  });
+  if (!response.data.accessToken) {
+    throw new Error("Layanan autentikasi tidak mengembalikan token akses.");
+  }
+  storeAccessToken(response.data.accessToken, remember);
+  return response.data.user;
+}
+
+export async function linkGoogleAccount(idToken: string): Promise<void> {
+  await apiRequest<{ success: true }>("/auth/google/link", {
+    method: "POST",
+    body: { idToken },
+  });
+}
+
 export async function registerAccount(details: RegistrationDetails): Promise<AuthUser> {
   await apiRequest<AuthResponse>("/auth/register", {
     method: "POST",
@@ -53,8 +66,4 @@ export async function registerAccount(details: RegistrationDetails): Promise<Aut
     },
   });
   return signIn({ identifier: details.username, password: details.password, remember: false });
-}
-
-export async function signInWithGoogle(): Promise<never> {
-  throw new AuthenticationUnavailableError();
 }

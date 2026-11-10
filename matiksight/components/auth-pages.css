@@ -198,6 +198,7 @@
 .auth-google { width: 100%; min-height: 43px; display: flex; align-items: center; justify-content: center; gap: 10px; border: 1px solid #d7e0eb; border-radius: 9px; color: #245397; background: #fff; font-size: 12px; font-weight: 620; transition: border-color .15s, background-color .15s, transform .15s; }
 .auth-google:hover { border-color: #9dbbe7; background: #f8fbff; }
 .auth-google:active { transform: translateY(1px); }
+.auth-google-control { display: flex; justify-content: center; overflow: hidden; }
 .auth-switch { margin: 16px 0 0; color: #495c7b; text-align: center; font-size: 12px; }
 .auth-switch a { margin-left: 3px; color: #226bd3; font-weight: 650; }
 .auth-switch a:hover { color: #134aab; text-decoration: underline; }
@@ -337,11 +338,15 @@
   .register-card { padding-top: 18px; }
   .register-card .auth-title { margin-bottom: 12px; }
 }
+@media (max-width: 420px) {
+  .auth-google-control { transform: scale(.82); }
+}
 @media (max-width: 380px) {
   .auth-layout { padding-right: 12px; padding-left: 12px; }
   .auth-card { padding-right: 16px; padding-left: 16px; }
   .auth-title h2 { font-size: 21px; }
   .auth-form-options { font-size: 11px; }
+  .auth-google-control { transform: scale(.72); }
 }
 @media (prefers-reduced-motion: reduce) {
   .auth-page *,
