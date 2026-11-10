@@ -8,7 +8,7 @@ existing database.
 
 | Table | Purpose and key fields |
 | --- | --- |
-| `users` | `id` UUID primary key; unique `username` and `email`; `password_hash`; nullable `full_name` and `profile_photo_url`; `account_status` defaults to `active`; created/updated timestamps. |
+| `users` | `id` UUID primary key; unique `username` and `email`; nullable `password_hash` for Google-only accounts; nullable unique `google_subject`; nullable `full_name` and `profile_photo_url`; `account_status` defaults to `active`; created/updated timestamps. |
 | `datasets` | Owner FK, display `name`, `original_filename`, extension/MIME/file size, row/column counts, JSONB schema/profile, nullable opaque `storage_key`, and `processing_status`. Existing rows keep `storage_key = NULL`. |
 | `dataset_rows` | Dataset FK, unique `(dataset_id, row_index)`, JSONB row values; supports paged preview and analysis without a single large JSON document. |
 | `uploaded_files` | User FK, original filename, opaque unique `storage_key`, type/MIME/size and creation timestamp; used by `/upload`. |
@@ -33,6 +33,11 @@ existing database.
 2. `20261103010000_saved_artifacts`: saved visualizations and reports.
 3. `20261104000000_profiles_and_file_storage`: profile fields, dataset file
    metadata, and uploaded files.
+4. `20261109160000_add_google_subject`: nullable unique Google identity
+   subject.
+5. `20261109210000_allow_google_only_accounts_without_password`: allows
+   `password_hash` to be null so Google-only accounts cannot use a generated
+   local password.
 
 The third migration adds nullable columns for existing user/dataset records,
 and defaults the new account status and processing status. It does not move or

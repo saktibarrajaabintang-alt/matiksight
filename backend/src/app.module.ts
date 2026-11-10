@@ -19,6 +19,10 @@ import { SavedArtifactsModule } from './saved-artifacts/saved-artifacts.module';
       if (typeof config.DATABASE_URL !== 'string' || !/^(postgresql|postgres):\/\//.test(config.DATABASE_URL)) {
         throw new Error('DATABASE_URL must be a PostgreSQL connection URL.');
       }
+      if (config.GOOGLE_CLIENT_ID !== undefined &&
+        (typeof config.GOOGLE_CLIENT_ID !== 'string' || !config.GOOGLE_CLIENT_ID.trim())) {
+        throw new Error('GOOGLE_CLIENT_ID must be a non-empty OAuth client ID when configured.');
+      }
       return config;
     },
   }), PrismaModule, HealthModule, UploadModule, AuthModule, DatasetsModule, SavedArtifactsModule],

@@ -61,7 +61,7 @@ export class AuthController {
   @UseGuards(AuthRateLimitGuard)
   @ApiEndpointDocs({
     summary: 'Log in with Google',
-    description: 'Verifies a Google ID token for the configured GOOGLE_CLIENT_ID and returns the same one-hour MatikSight bearer token and profile as local login. Limited to 10 requests per IP per 15 minutes.',
+    description: 'Verifies a Google ID token for GOOGLE_CLIENT_ID and returns the same one-hour MatikSight bearer token and profile as local login. An existing local email is never linked automatically; use POST /auth/google/link with a local bearer token. Google login and linking share a limit of 10 requests per IP per 15 minutes.',
     successStatus: 201,
     successDescription: 'Returns a MatikSight bearer token and public user profile.',
     successExample: { success: true, data: { accessToken: '<JWT>', tokenType: 'Bearer', expiresIn: '1h', user: { id: '<uuid>', fullName: 'Analyst One', username: 'analyst01', email: 'analyst@example.com', profilePhotoUrl: null, accountStatus: 'active', createdAt: '2026-11-03T00:00:00.000Z', updatedAt: '2026-11-03T00:00:00.000Z' } } },
@@ -83,7 +83,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiEndpointDocs({
     summary: 'Link a Google identity to the current account',
-    description: 'Requires a MatikSight bearer token and a verified Google ID token whose email matches the current account. Limited to 10 requests per IP per 15 minutes.',
+    description: 'Requires a MatikSight bearer token and a verified Google ID token whose email matches the current account. A Google identity already linked to another account is rejected. Google login and linking share a limit of 10 requests per IP per 15 minutes.',
     successStatus: 201,
     successDescription: 'Google identity linked to the authenticated account.',
     successExample: { success: true, message: 'Akun Google berhasil ditautkan.' },

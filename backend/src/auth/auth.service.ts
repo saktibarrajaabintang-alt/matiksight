@@ -50,7 +50,7 @@ export class AuthService {
     const user = await this.prisma.user.findFirst({
       where: { OR: [{ username: normalized }, { email: normalized.toLowerCase() }] },
     });
-    const valid = user && user.accountStatus === 'active'
+    const valid = user && user.accountStatus === 'active' && user.passwordHash
       ? await bcrypt.compare(password, user.passwordHash)
       : false;
     if (!valid || !user) throw new UnauthorizedException('Username/email atau password salah.');
@@ -145,7 +145,7 @@ export class AuthService {
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+    if (!user?.passwordHash || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
       throw new UnauthorizedException('Password saat ini tidak sesuai.');
     }
     await this.prisma.user.update({
@@ -165,8 +165,6 @@ export class AuthService {
       .normalize('NFKD')
       .replace(/[^a-zA-Z0-9_]/g, '')
       .slice(0, 20) || 'googleuser';
-    const passwordHash = await bcrypt.hash(randomBytes(32).toString('base64url'), 12);
-
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
         return await this.prisma.user.create({
@@ -175,7 +173,7 @@ export class AuthService {
             username: `${stem}_${randomBytes(4).toString('hex')}`,
             email: identity.email,
             googleSubject: identity.subject,
-            passwordHash,
+            passwordHash: null,
             profilePhotoUrl: identity.profilePhotoUrl,
           },
         });

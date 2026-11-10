@@ -13,7 +13,7 @@ model User {
   username        String               @unique @db.VarChar(30)
   email           String               @unique @db.VarChar(254)
   googleSubject   String?              @unique @map("google_subject") @db.VarChar(255)
-  passwordHash    String               @map("password_hash") @db.VarChar(255)
+  passwordHash    String?              @map("password_hash") @db.VarChar(255)
   profilePhotoUrl String?              @map("profile_photo_url") @db.VarChar(2048)
   accountStatus   String               @default("active") @map("account_status") @db.VarChar(20)
   createdAt       DateTime             @default(now()) @map("created_at")

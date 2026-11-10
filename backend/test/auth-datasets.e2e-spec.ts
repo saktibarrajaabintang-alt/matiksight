@@ -6,8 +6,9 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { FileStorageService } from '../src/storage/file-storage.service';
-import { ValidationPipe } from '@nestjs/common';
+import { UnauthorizedException, ValidationPipe } from '@nestjs/common';
 import { SafeExceptionFilter } from '../src/security/safe-exception.filter';
+import { GoogleTokenVerifier, type GoogleIdentity } from '../src/auth/google-token-verifier';
 
 function memoryDatabase() {
   const users: Array<Record<string, any>> = [];
@@ -18,22 +19,26 @@ function memoryDatabase() {
   const uploadedFiles: Array<Record<string, any>> = [];
   const user = {
     create: jest.fn(async ({ data, select }: any) => {
-      if (users.some((u) => u.username === data.username || u.email === data.email)) {
+      if (users.some((u) => u.username === data.username || u.email === data.email ||
+        (data.googleSubject && u.googleSubject === data.googleSubject))) {
         throw { code: 'P2002' };
       }
-      const created = { id: `00000000-0000-4000-8000-${String(users.length + 1).padStart(12, '0')}`, profilePhotoUrl: null, accountStatus: 'active', ...data, createdAt: new Date(), updatedAt: new Date() };
+      const created = { id: `00000000-0000-4000-8000-${String(users.length + 1).padStart(12, '0')}`, profilePhotoUrl: null, googleSubject: null, passwordHash: null, accountStatus: 'active', ...data, createdAt: new Date(), updatedAt: new Date() };
       users.push(created);
       return select ? Object.fromEntries(Object.keys(select).map((key) => [key, created[key]])) : created;
     }),
     findFirst: jest.fn(async ({ where }: any) => users.find((item) => where.OR.some((condition: any) =>
       Object.entries(condition).every(([key, value]) => item[key] === value))) ?? null),
     findUnique: jest.fn(async ({ where, select }: any) => {
-      const found = users.find((item) => item.id === where.id);
+      const found = users.find((item) => Object.entries(where).every(([key, value]) => item[key] === value));
       return found && select ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : found ?? null;
     }),
     update: jest.fn(async ({ where, data, select }: any) => {
       const found = users.find((item) => item.id === where.id);
       if (!found) throw { code: 'P2025' };
+      if (data.googleSubject && users.some((item) => item !== found && item.googleSubject === data.googleSubject)) {
+        throw { code: 'P2002' };
+      }
       Object.assign(found, data, { updatedAt: new Date() });
       return select ? Object.fromEntries(Object.keys(select).map((key) => [key, found[key]])) : found;
     }),
@@ -133,6 +138,21 @@ function memoryDatabase() {
 describe('Auth and dataset ownership (e2e with isolated in-memory database)', () => {
   let app: INestApplication<App>;
   let db: ReturnType<typeof memoryDatabase>;
+  let googleIdentity: GoogleIdentity;
+  const googleVerifier = {
+    verify: jest.fn(async (idToken: string) => {
+      if (idToken === 'invalid' || idToken === 'unverified') {
+        throw new UnauthorizedException('Token Google tidak valid.');
+      }
+      return googleIdentity;
+    }),
+  };
+  const defaultGoogleIdentity: GoogleIdentity = {
+    subject: 'google-subject-1',
+    email: 'google@example.com',
+    fullName: 'Google User',
+    profilePhotoUrl: null,
+  };
   const files = new Map<string, Buffer>();
   const storage = {
     store: jest.fn(async (buffer: Buffer, extension: string) => {
@@ -150,6 +170,8 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
 
   beforeEach(async () => {
     files.clear();
+    googleIdentity = { ...defaultGoogleIdentity };
+    googleVerifier.verify.mockClear();
     storage.store.mockClear();
     storage.read.mockClear();
     storage.remove.mockClear();
@@ -157,6 +179,7 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
     const moduleFixture: TestingModule = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(PrismaService).useValue(db)
       .overrideProvider(FileStorageService).useValue(storage)
+      .overrideProvider(GoogleTokenVerifier).useValue(googleVerifier)
       .compile();
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
@@ -202,6 +225,80 @@ describe('Auth and dataset ownership (e2e with isolated in-memory database)', ()
       .set('Authorization', `Bearer ${usernameToken}`).expect(200);
     expect(me.body.data.user).toMatchObject({ username: 'userone', email: 'one@example.com' });
     expect(me.body.data.user).not.toHaveProperty('passwordHash');
+  });
+
+  it('creates a Google-only account on first login and reuses it on repeated login', async () => {
+    const first = await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken: 'valid-google-id-token' }).expect(201);
+    const second = await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken: 'valid-google-id-token' }).expect(201);
+
+    expect(first.body.data).toMatchObject({
+      tokenType: 'Bearer',
+      expiresIn: '1h',
+      user: { email: 'google@example.com', username: expect.stringMatching(/^google_[a-f0-9]{8}$/) },
+    });
+    expect(first.body.data.user.id).toBe(second.body.data.user.id);
+    expect(db.user.create).toHaveBeenCalledTimes(1);
+    expect(db.user.create.mock.calls[0][0].data.passwordHash).toBeNull();
+    await request(app.getHttpServer()).post('/auth/login')
+      .send({ identifier: 'google@example.com', password: 'any-password' }).expect(401);
+  });
+
+  it.each(['invalid', 'unverified'])('rejects a %s Google ID token over HTTP', async (idToken) => {
+    await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken }).expect(401);
+    expect(db.user.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects Google login when the verified email belongs to a local account', async () => {
+    await register('localowner', 'google@example.com');
+
+    await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken: 'valid-google-id-token' }).expect(409);
+    expect(db.user.update).not.toHaveBeenCalled();
+    expect(db.user.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('links only through the authenticated endpoint and permits later Google login', async () => {
+    await register('linkowner', 'google@example.com');
+    const token = await login('linkowner');
+
+    await request(app.getHttpServer()).post('/auth/google/link')
+      .send({ idToken: 'valid-google-id-token' }).expect(401);
+    await request(app.getHttpServer()).post('/auth/google/link')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ idToken: 'valid-google-id-token' }).expect(201);
+
+    const linkedLogin = await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken: 'valid-google-id-token' }).expect(201);
+    expect(linkedLogin.body.data.user.email).toBe('google@example.com');
+    expect(db.user.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects linking a Google subject already linked to a different account', async () => {
+    await register('firstowner', 'first@example.com');
+    const firstToken = await login('firstowner');
+    googleIdentity = { ...defaultGoogleIdentity, email: 'first@example.com' };
+    await request(app.getHttpServer()).post('/auth/google/link')
+      .set('Authorization', `Bearer ${firstToken}`)
+      .send({ idToken: 'valid-google-id-token' }).expect(201);
+
+    await register('secondowner', 'second@example.com');
+    const secondToken = await login('secondowner');
+    googleIdentity = { ...defaultGoogleIdentity, email: 'second@example.com' };
+    await request(app.getHttpServer()).post('/auth/google/link')
+      .set('Authorization', `Bearer ${secondToken}`)
+      .send({ idToken: 'valid-google-id-token' }).expect(409);
+  });
+
+  it('rate limits Google login requests with HTTP 429', async () => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await request(app.getHttpServer()).post('/auth/google')
+        .send({ idToken: 'invalid' }).expect(401);
+    }
+    await request(app.getHttpServer()).post('/auth/google')
+      .send({ idToken: 'invalid' }).expect(429);
   });
 
   it('updates the authenticated profile and changes passwords only after verifying the current password', async () => {

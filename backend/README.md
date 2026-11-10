@@ -59,7 +59,8 @@ Register menerima username 3–30 karakter (huruf, angka, underscore), email,
 dan password minimal 8 karakter. Password disimpan sebagai bcrypt hash. Batas
 password adalah 72 byte UTF-8 agar bcrypt tidak mengabaikan byte sisanya.
 Register dibatasi 5 request per IP dalam 15 menit; login dibatasi 10 request per
-IP dalam 15 menit. Login Google dibatasi 10 request per IP dalam 15 menit.
+IP dalam 15 menit. Login dan penautan Google berbagi batas 10 request per IP
+dalam 15 menit.
 Ketika terlampaui, API mengembalikan HTTP 429 dan header
 `Retry-After`.
 
@@ -98,18 +99,22 @@ menghasilkan pesan generik yang tidak membedakan akun atau password.
 ### Login Google
 
 Set `GOOGLE_CLIENT_ID` ke OAuth 2.0 Web client ID yang sama dengan client yang
-meminta Google ID token. `POST /auth/google` memverifikasi signature, issuer,
+meminta Google ID token. Nilai yang disediakan harus tidak kosong dan divalidasi
+saat startup. Tanpa nilai tersebut, login lokal tetap tersedia sementara
+endpoint Google mengembalikan HTTP 503. `POST /auth/google` memverifikasi signature, issuer,
 expiry, audience, dan email terverifikasi Google, lalu mengembalikan response
 serta JWT MatikSight satu jam yang sama seperti `POST /auth/login`. Akun Google
-baru mendapat username unik dan password acak yang tidak dipakai untuk login
-lokal. Subject Google disimpan agar login berikutnya tetap terikat pada
+baru mendapat username unik tanpa password lokal (`password_hash` bernilai
+`NULL`). Subject Google disimpan agar login berikutnya tetap terikat pada
 identitas yang sama. Email yang sudah dimiliki akun lokal tidak otomatis
 ditautkan: login Google mengembalikan 409. Masuk dengan akun lokal, lalu gunakan
-`POST /auth/google/link` bersama bearer token lokal dan ID token Google. Email
-terverifikasi Google harus sama dengan email profil akun tersebut.
+`POST /auth/google/link` bersama bearer token lokal dan ID token Google yang
+valid. Email terverifikasi Google harus sama dengan email profil akun tersebut;
+subject yang sudah terhubung ke akun lain ditolak.
 
-Schema membutuhkan kolom nullable `google_subject`. Migration baru sudah
-disiapkan tetapi **belum diterapkan**. Sebelum menerapkannya, verifikasi target
+Schema membutuhkan kolom nullable `google_subject` dan `password_hash`.
+Migration untuk kedua perubahan sudah disiapkan tetapi **belum diterapkan**.
+Sebelum menerapkannya, verifikasi target
 database dari konfigurasi `DATABASE_URL` di environment backend dan minta
 persetujuan untuk database tersebut. Setelah disetujui, jalankan
 `npm run prisma:deploy` dari folder `backend/`; jangan gunakan

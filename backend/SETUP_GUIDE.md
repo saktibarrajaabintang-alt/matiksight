@@ -40,6 +40,7 @@ at `http://localhost:3000` (for example `/auth/login`).
 | --- | --- | --- |
 | `DATABASE_URL` | Yes | PostgreSQL connection URL. |
 | `JWT_SECRET` | Yes | At least 32 characters; never commit the real value. |
+| `GOOGLE_CLIENT_ID` | No | OAuth 2.0 web client ID used as the ID-token audience. When configured, it must be non-empty; without it, local auth remains available and Google endpoints return 503. |
 | `CORS_ORIGINS` | No | Comma-separated exact browser origins; empty disables cross-origin access. |
 | `DATA_STORAGE_DIR` | No | Private upload directory; defaults to `storage` under the backend working directory. |
 | `PORT` | No | HTTP port; defaults to 3000. |

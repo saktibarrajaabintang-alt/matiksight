@@ -22,7 +22,7 @@ const makeUser = (
     username: string;
     email: string;
     googleSubject: string | null;
-    passwordHash: string;
+    passwordHash: string | null;
     profilePhotoUrl: string | null;
     accountStatus: string;
     createdAt: Date;
@@ -158,7 +158,7 @@ describe('AuthService Google login', () => {
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
-  it('creates a Google account with a unique username and an unusable random password', async () => {
+  it('creates a Google account with a unique username and no local password', async () => {
     prisma.user.findUnique
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
@@ -180,8 +180,18 @@ describe('AuthService Google login', () => {
     expect(createCall.data.googleSubject).toBe(identity.subject);
     expect(createCall.data.email).toBe(identity.email);
     expect(createCall.data.username).toMatch(/^analyst_[a-f0-9]{8}$/);
-    expect(createCall.data.passwordHash).not.toBe('google-id-token');
+    expect(createCall.data.passwordHash).toBeNull();
     expect(jwt.signAsync).toHaveBeenCalledWith({ sub: 'new-user-id' });
+  });
+
+  it('does not authenticate a Google-only account through local password login', async () => {
+    prisma.user.findFirst.mockResolvedValueOnce(
+      makeUser({ passwordHash: null }),
+    );
+
+    await expect(
+      service.login(identity.email, 'any-password'),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('does not log in an inactive Google account', async () => {
